@@ -3,6 +3,29 @@
 -- desc:    Yu-gi-oh Speed duel for tic80
 -- version: 0.1
 -- script:  lua
+--
+-- ============================================================
+-- TABLE OF CONTENTS
+-- ============================================================
+--  LAYOUT / COLORS              constants for screen + zone geometry
+--  CARD DATABASE                CARDS list, DECK1, DECK2
+--  HELPERS                      stat math, shuffle, hand layout
+--  STATE                        G global; newGame()
+--  CORE GAME                    drawing/anim primitives, LP, damage
+--  MUTATIONS                    single-source helpers: send to GY / discard
+--  CHAIN STACK                  openChain / pushChainLink / advanceChain
+--  BEHAVIORS                    per-card hooks (ADD CARDS HERE)
+--  BEHAVIOR DISPATCH            behaviorOf / applyResolve / fireMonHook
+--  MENU / INPUT                 buildMenu, execAction, handleInput
+--  AUTO PHASE / AI              AI main + battle logic
+--  TITLE / DECK BUILDER         menus and persistence
+--  RPS / BOOT / TIC             startup, RPS opener, frame entry
+--
+-- Adding a new card:
+--  1) Append to CARDS (with `effect` string keying its behavior).
+--  2) Add a BEHAVIORS[effect] entry with the hooks it needs.
+--  3) Optional: add to a deck list (DECK1/DECK2) and a sprite.
+-- No other file edits should be required for a typical new card.
 
 -- ============================================================
 -- LAYOUT
@@ -82,7 +105,7 @@ CED  = 2   -- extra deck zone                           (orange)
 -- Card faces
 CCA  = 9   -- normal monster face                       (tan)
 CME  = 2   -- effect monster face                       (orange)
-CSP  = 3   -- spell card face                           (dark green)
+CSP  = 11   -- spell card face                           (dark green)
 CTR  = 13  -- trap card face                            (purple)
 CCB  = 8   -- card back                                 (brown)
 -- HUD & cursor
@@ -93,9 +116,6 @@ CSEL = 12  -- selection cursor dotted border            (medium blue)
 CAT  = 1   -- attack flash, damage highlight            (dark red)
 -- Field
 CMAT = 5   -- duel field "playmat" background
-
--- Effects that can only be activated in response to an opponent action, never from the player menu
-RESPONSE_ONLY_EFFECTS={mirrorforce=true,traphole=true}
 
 PHASES={"DRAW","STBY","MAIN","BATTLE","END"}
 PH_DRAW=1; PH_STBY=2; PH_MAIN=3; PH_BATTLE=4; PH_END=5
@@ -186,17 +206,21 @@ CARDS={
   desc="Target 1 monster in your GY; Special Summon it in ATK Pos. When this card leaves the field, destroy that monster. When that monster is destroyed, destroy this card."},
  {name="Buster Blader",  cat="monster", type="warrior",   attr="earth", effect="busterblader", atk=2600, def=2300, lvl=7, spr=322, bg=14,
   desc="Gains 500 ATK for each Dragon-type monster your opponent controls or has in their GY."},
+ {name="Mystical Typhoon",cat="spell", subtype="quickplay", effect="mst", spr=480, bg=14,
+  desc="Target 1 Spell/Trap on the field; destroy that target."},
+ {name="Magic Jammer",  cat="trap", subtype="counter", effect="magicjammer", spr=482, bg=14,
+  desc="When a Spell is activated: Discard 1 card; negate that activation, and destroy that card."},
 }
 -- IDs above are pmem-stable: only append new cards, never reorder.
+-- 27=MST, 28=Magic Jammer
 
-DECK1={1,1,1, 3,3,3, 2,2, 2,5, 25,25,25, 24,24, 24,12, 14,15,18}
---  Kuriboh x3, Sangan x3, GiantSoldier x2, 7ColorFish x2,
---  La Jinn x3, SummonedSkull x2, DarkMagician x2,
---  Dark Hole, Raigeki, Mirror Force  (total=20)
+DECK1={1,1,1, 3,3,3, 2,2, 2,5, 25,28,28, 24,27, 27,12, 14,15,18}
+--  Kuriboh x3, Sangan x3, ManEaterBug x2, 7ColorFish x1, La Jinn x1,
+--  Call of Haunted x1, Magic Jammer x2, Trap Hole x2, MST x2, DarkMagician x1,
+--  Feral Imp, Rogue Doll, Dark Hole  (total=20)
 
 DECK2={2,2, 3,3, 4,4, 9,9, 10, 11, 13,
-       18, 19, 20, 21, 21,
-       }
+       18, 19, 20, 21, 21, 23, 23 ,24, 24}
 --  Man-EaterBug x2(flip), Sangan x2(effect), GiantSoldier x2(highDEF),
 --  AquaMadoor x2(highDEF), MysticalElf x1(highDEF),
 --  SummonedSkull x1(tribute1), RedEyesBDragon x1(tribute2)  [10 monsters]
@@ -252,49 +276,26 @@ end
 -- Returns total ATK bonus, total DEF bonus.
 function getEquipBonus(card)
  local ab,db=0,0
- for p=1,2 do
-  for c=1,3 do
-   local eq=G.st[p][c]
-   if eq and not eq.facedown and eq.subtype=="equip" and eq.equippedTo then
-    local tp,tc=eq.equippedTo.plr,eq.equippedTo.col
-    if G.mon[tp] and G.mon[tp][tc]==card then
-     if eq.effect=="unitedwestand" then
-      local n=0
-      for i=1,3 do if G.mon[tp][i] and not G.mon[tp][i].facedown then n=n+1 end end
-      ab=ab+n*800; db=db+n*800
-     end
+ for p=1,2 do for c=1,3 do
+  local eq=G.st[p][c]
+  if eq and not eq.facedown and eq.subtype=="equip" and eq.equippedTo then
+   local tp,tc=eq.equippedTo.plr,eq.equippedTo.col
+   if G.mon[tp] and G.mon[tp][tc]==card then
+    local b=behaviorOf(eq)
+    if b and b.equipBonus then
+     local a,d=b.equipBonus(card,eq); ab=ab+a; db=db+d
     end
    end
   end
- end
+ end end
  return ab,db
 end
 
 -- Returns effective ATK, applying continuous and equip bonuses.
 function getMonAtk(card)
  local bonus=0
- if card.effect=="dmgirl" then
-  for p=1,2 do
-   for _,c in ipairs(G.gy[p]) do
-    if c.name=="Dark Magician" then bonus=bonus+300 end
-   end
-  end
- elseif card.effect=="busterblader" then
-  local opp=nil
-  for p=1,2 do
-   for i=1,3 do if G.mon[p][i]==card then opp=3-p; break end end
-   if opp then break end
-  end
-  if opp then
-   for i=1,3 do
-    local m=G.mon[opp][i]
-    if m and not m.facedown and m.type=="dragon" then bonus=bonus+500 end
-   end
-   for _,c in ipairs(G.gy[opp]) do
-    if c.type=="dragon" then bonus=bonus+500 end
-   end
-  end
- end
+ local b=behaviorOf(card)
+ if b and b.atkBonus then bonus=b.atkBonus(card) end
  local ab,_=getEquipBonus(card)
  return card.atk+bonus+ab
 end
@@ -314,7 +315,7 @@ function checkEquips()
     local tp,tc=eq.equippedTo.plr,eq.equippedTo.col
     local target=G.mon[tp] and G.mon[tp][tc]
     if not target or target.facedown then
-     G.st[p][c]=nil; table.insert(G.gy[p],eq)
+     sendSpellTrapToGY(p,c,"rule")
     end
    end
   end
@@ -375,6 +376,8 @@ function newGame()
   aiTimer=0,
   aiBattleIdx=1,
   autoTimer=50,
+  chain=nil,
+  _pending=nil,
  }
  ANIM={}
 end
@@ -585,30 +588,422 @@ function destroyFlash(x,y)
  addAnim(24,function(t,f) if t//4%2==0 then rect(x,y,ZW_MAIN,ZH,CCR) end end)
 end
 
+-- Visually destroy a S/T card: if face-down, flip it face-up first and let the
+-- player see what it was during a flash; then send to GY. For face-up cards,
+-- flash + destroy immediately. The reveal path defers GY-move into the flash's
+-- onDone so the revealed card remains visible during the flash.
+function revealAndDestroyST(plr,col)
+ local card=G.st[plr][col]
+ if not card then return end
+ local zx=(plr==1) and COL[col] or COL[4-col]
+ local zy=(plr==1) and PY_S or OY_S
+ if card.facedown then
+  card.facedown=false
+  addAnim(24,function(t,f) if t//4%2==0 then rect(zx,zy,ZW_MAIN,ZH,CCR) end end,
+   function() sendSpellTrapToGY(plr,col,"effect") end)
+ else
+  destroyFlash(zx,zy)
+  sendSpellTrapToGY(plr,col,"effect")
+ end
+end
+
+-- Monster counterpart: if face-down, reveal it before destroying so the player
+-- sees what is being removed. For face-up monsters this is equivalent to
+-- sendMonsterToGY (which already calls destroyFlash for destruction reasons).
+-- The reveal path defers sendMonsterToGY + flushTriggers into the flash's
+-- onDone — meaning onDestroy triggers for revealed face-down monsters fire
+-- after the reveal animation, not in lockstep with face-up destructions.
+function revealAndDestroyMon(plr,col,reason)
+ local m=G.mon[plr][col]
+ if not m then return end
+ if m.facedown and DESTROY_REASONS[reason] then
+  m.facedown=false
+  local zx,zy=monZoneXY(plr,col)
+  addAnim(24,function(t,f) if t//4%2==0 then rect(zx,zy,ZW_MAIN,ZH,CCR) end end,
+   function() sendMonsterToGY(plr,col,reason); flushTriggers() end)
+  return
+ end
+ sendMonsterToGY(plr,col,reason)
+end
+
 -- LP change helper: clamps and checks win; dispLp animates toward G.lp each tick
 function changeLp(plr,delta)
  G.lp[plr]=math.max(0,G.lp[plr]+delta)
  checkWin()
 end
 
--- Apply battle damage, checking for Kuriboh in hand first.
--- plr=1: prompt player to activate Kuriboh. plr=2: AI auto-uses it.
+-- Apply battle damage. If a card in `plr`'s hand has a `handTrap` behavior
+-- (e.g. Kuriboh), it's offered first (player) or auto-used (AI).
 function applyDamage(plr,dmg)
  if dmg<=0 then return end
  for i,card in ipairs(G.hand[plr]) do
-  if card.effect=="kuriboh" then
-   if plr==1 then
-    G.mode="trap_ask"
-    G.trapAsk={fromHand=true,handIdx=i,card=card,
-     onYes=function() end,
-     onNo =function() changeLp(1,-dmg) end}
-   else
-    table.remove(G.hand[2],i); table.insert(G.gy[2],card)
-   end
-   return
-  end
+  local b=behaviorOf(card)
+  if b and b.handTrap then b.handTrap(plr,dmg,i,card); return end
  end
  changeLp(plr,-dmg)
+end
+
+-- ============================================================
+-- MUTATIONS (single source of truth for moving cards)
+-- ============================================================
+-- All field/hand -> GY movement must go through these helpers so that:
+--  (1) destroyFlash fires consistently
+--  (2) onDestroy triggers are queued automatically via G._pending
+--  (3) linkedTrap / linkedMon back-pointers are cleared
+--  (4) the future chain system has a single seam to hook into
+-- `reason` is a free-form tag: "battle", "effect", "cost", "tribute",
+-- "rule" (self-destruct, e.g. equip with no target). Triggered effects
+-- may inspect it to decide whether they fire (PSCT "by battle" vs
+-- "by card effect" distinction).
+
+-- Reasons that count as "destruction" and fire onDestroy triggers.
+-- Reasons like "tribute" and "cost" only send the card to GY; they do not
+-- fire destruction triggers (per PSCT). A future "onSent" event will cover
+-- those if any card ever needs to react to leaving the field for any reason.
+DESTROY_REASONS={battle=true,effect=true,rule=true}
+
+function queueTrigger(card,plr,reason)
+ if not DESTROY_REASONS[reason] then return end
+ G._pending=G._pending or {}
+ table.insert(G._pending,{card=card,plr=plr,reason=reason})
+end
+
+function flushTriggers()
+ if not G._pending or #G._pending==0 then checkEquips() return end
+ local t=G._pending; G._pending={}
+ deferEffects(t)
+ checkEquips()
+end
+
+function sendMonsterToGY(plr,col,reason)
+ local m=G.mon[plr][col]
+ if not m then return nil end
+ G.mon[plr][col]=nil
+ table.insert(G.gy[plr],m)
+ if DESTROY_REASONS[reason] then
+  local zx,zy=monZoneXY(plr,col)
+  destroyFlash(zx,zy)
+ end
+ -- If this monster was summoned by a linked trap (Call of the Haunted etc.),
+ -- destroy that trap too when it leaves the field for any reason.
+ if m.linkedTrap then
+  for p=1,2 do for c=1,3 do
+   if G.st[p][c]==m.linkedTrap then sendSpellTrapToGY(p,c,"rule") end
+  end end
+ end
+ queueTrigger(m,plr,reason)
+ return m
+end
+
+function sendSpellTrapToGY(plr,col,reason)
+ local c=G.st[plr][col]
+ if not c then return nil end
+ G.st[plr][col]=nil
+ if c.linkedMon then c.linkedMon.linkedTrap=nil; c.linkedMon=nil end
+ table.insert(G.gy[plr],c)
+ return c
+end
+
+function discardFromHand(plr,handIdx,reason)
+ local c=G.hand[plr][handIdx]
+ if not c then return nil end
+ table.remove(G.hand[plr],handIdx)
+ table.insert(G.gy[plr],c)
+ return c
+end
+
+function addToGY(plr,card,reason)
+ if not card then return end
+ table.insert(G.gy[plr],card)
+end
+
+-- ============================================================
+-- CHAIN STACK
+-- ============================================================
+-- The chain is YGO's mechanism for resolving simultaneous/responding
+-- effects. LIFO: links push onto the top as players respond, then resolve
+-- from top to bottom once both players pass consecutively.
+--
+-- G.chain is nil when no chain is active. When active:
+--   G.chain = {
+--     links    = { EffectInstance, ... },   -- index 1 = Link 1 (bottom)
+--     offering = 1 | 2,                     -- who currently has priority
+--     passes   = 0,                         -- 2 = both passed -> resolve
+--     trigger  = { event=, ctx= } | nil,    -- the action that opened this
+--     reason   = "spell"|"trap"|"trigger",  -- why this chain exists
+--   }
+--
+-- EffectInstance fields:
+--   source     - the card object
+--   controller - 1 | 2  (who activated)
+--   speed      - 1 | 2 | 3
+--   sourceLoc  - { zone, plr, col } cleanup location after resolution
+--                  zone = "st" | "hand" | "field" | nil
+--   targets    - frozen snapshot at activation (for fizzle checks)
+--   resolveFn  - function(self) called when this link resolves
+--
+-- This file ONLY defines the data model + lifecycle. Existing code paths
+-- (spell activation, attack resolution, AI traps) have not been rewired
+-- yet -- the game still works as before. Wiring is step 2b.
+
+-- Derive spell speed from card data so we don't have to annotate every card.
+function chainSpeed(card)
+ if not card then return 1 end
+ local b=behaviorOf(card)
+ if b and b.speed then return b.speed end
+ if card.cat=="trap"  then return card.subtype=="counter"   and 3 or 2 end
+ if card.cat=="spell" then return card.subtype=="quickplay" and 2 or 1 end
+ return 1  -- monster default (Ignition / Flip / Trigger)
+end
+
+function chainTopSpeed()
+ if not G.chain or #G.chain.links==0 then return 0 end
+ return G.chain.links[#G.chain.links].speed
+end
+
+-- True if this card's speed is high enough to add to the current chain.
+-- Open-game-state priority is enforced by the caller, not here.
+function canRespondToChain(card)
+ local s=chainSpeed(card)
+ if not G.chain or #G.chain.links==0 then return true end
+ return s>=chainTopSpeed()
+end
+
+function openChain(trigger,reason)
+ G.chain={links={},offering=nil,passes=0,trigger=trigger,reason=reason}
+end
+
+function closeChain()
+ G.chain=nil
+end
+
+function pushChainLink(link)
+ if not G.chain then openChain(nil,"spell") end
+ link.speed=link.speed or chainSpeed(link.source)
+ table.insert(G.chain.links,link)
+ G.chain.passes=0
+ G.chain.offering=3-link.controller  -- pass priority to opponent
+end
+
+-- Build a chain link for a spell or trap card activated from a known location.
+-- col may be nil for cards activated from hand (e.g. Quick-Play from hand).
+function makeSpellTrapLink(card,controller,zone,plr,col,targets)
+ return {
+  source     = card,
+  controller = controller,
+  speed      = chainSpeed(card),
+  sourceLoc  = {zone=zone,plr=plr,col=col},
+  targets    = targets,
+  resolveFn  = function(self)
+   local ctx=G.chain and G.chain.trigger and G.chain.trigger.ctx
+   applyResolve(self.source,self.controller,ctx)
+  end,
+ }
+end
+
+-- After a link resolves, dispose of its source per card type:
+--  - Normal spell/trap on field -> GY
+--  - Continuous/equip spell -> stays face-up on field
+--  - Card activated from hand -> GY
+function spendChainLink(link)
+ local loc=link.sourceLoc
+ if not loc then return end
+ if loc.zone=="st" then
+  local c=link.source
+  if c.subtype=="continuous" or c.subtype=="equip" then
+   c.facedown=false
+  else
+   sendSpellTrapToGY(loc.plr,loc.col,"effect")
+  end
+ elseif loc.zone=="hand" then
+  for i,h in ipairs(G.hand[loc.plr]) do
+   if h==link.source then discardFromHand(loc.plr,i,"effect"); break end
+  end
+ end
+end
+
+-- Called when both players have passed consecutively.
+-- Resolves links from top (last pushed) to bottom (first pushed).
+-- Sets G.chainResolving=true during the loop so callbacks invoked from
+-- resolveFn (e.g. legacy returnToTrapSelect) can detect they're mid-chain
+-- and skip flow control they no longer own.
+-- If trigger.onResolved is set and trigger.consumed is not, runs the
+-- continuation after the chain closes.
+function resolveChain()
+ if not G.chain then return end
+ local trig=G.chain.trigger
+ local links=G.chain.links
+ local resolved=#links>0
+ G.chainResolving=true
+ for i=#links,1,-1 do
+  local link=links[i]
+  -- Negated links (e.g. by Magic Jammer) skip their resolveFn but still
+  -- run spendChainLink so the source card goes to GY / cleans up properly.
+  -- (The negating effect typically also destroys the source itself, but
+  -- spendChainLink is idempotent — sendSpellTrapToGY no-ops if already gone.)
+  if not link.negated and link.resolveFn then link.resolveFn(link) end
+  spendChainLink(link)
+ end
+ closeChain()
+ G.chainResolving=false
+ -- onDestroy etc. triggers queued during resolution become a NEW chain (SEGOC).
+ flushTriggers()
+ if trig and trig.onResolved then
+  -- The legacy "consumed" flag (set by Mirror Force) means the original
+  -- action is canceled. Migrating callers should instead check game state
+  -- inside onResolved (e.g. "is the attacker still on the field?").
+  local consumed=G.trapSelect and G.trapSelect.consumed
+  if not consumed then trig.onResolved(resolved) end
+ end
+end
+
+-- Current offering player passes. After two consecutive passes, resolve.
+function passChainPriority()
+ if not G.chain then return end
+ G.chain.passes=G.chain.passes+1
+ if G.chain.passes>=2 then
+  resolveChain()
+ else
+  G.chain.offering=3-G.chain.offering
+ end
+end
+
+-- Minimal chain stack overlay. Renders nothing when chain is empty (open
+-- response window with no links yet). When N>=1 links exist, shows a small
+-- chip centered above the divider listing each link bottom-to-top.
+-- Small banner showing what the current input mode is asking for. Drawn
+-- below the chain stack overlay when relevant.
+function drawModeBanner()
+ local txt=nil
+ if G.mode=="sel_discard" and G.discardSel then
+  txt=G.discardSel.title or "DISCARD"
+ elseif G.mode=="sel_st_target" and G.stTargetSel then
+  txt=G.stTargetSel.title or "PICK S/T"
+ end
+ if not txt then return end
+ local w=#txt*4+8
+ local x=FA_X+(FA_W-w)//2
+ local y=DIV_Y+24
+ rect(x,y,w,9,CCR)
+ rectb(x,y,w,9,CT)
+ print(txt,x+4,y+2,CT,true,1,true)
+end
+
+function drawChain()
+ if not G.chain then return end
+ local links=G.chain.links
+ local n=#links
+ if n==0 then return end
+ local rowH=7
+ local h=10+n*rowH
+ local w=70
+ local x=FA_X+(FA_W-w)//2
+ local y=DIV_Y-h//2
+ rect(x,y,w,h,CB)
+ rectb(x,y,w,h,CT)
+ print("CHAIN "..n,x+4,y+2,CCR,true,1,true)
+ for i=1,n do
+  local lk=links[i]
+  local nm=(lk.source and lk.source.name) or "?"
+  if #nm>13 then nm=nm:sub(1,13) end
+  print(i..":"..nm,x+4,y+9+(i-1)*rowH,CT,true,1,true)
+ end
+end
+
+-- Does `plr` own a face-down S/T card that could chain onto the current trigger?
+-- Returns true if at least one face-down trap in plr's S/T zones has a
+-- BEHAVIORS.triggers[event] (or chain_open) predicate that returns true.
+-- Note: this only covers face-down S/T responses. Quick Effects from hand
+-- (Kuriboh) are evaluated separately via applyDamage's handTrap hook.
+function playerHasChainableResponse(plr)
+ if not G.chain or not G.chain.trigger then return false end
+ local trig=G.chain.trigger
+ if not trig.event then return false end
+ if plr==1 then
+  return hasActivatableTrap(trig.event,trig.ctx)
+ end
+ return aiHasChainableResponse(trig.event,trig.ctx)
+end
+
+-- Find AI's first chainable face-down trap for (event,ctx). Returns
+-- (stCol, trap, behavior) or nil. Used by both has-check and activation.
+function findAIChainResponder(event,ctx)
+ if not event then return nil end
+ for i=1,3 do
+  if trapCanRespond(G.st[2][i],event,ctx) then
+   return i,G.st[2][i],behaviorOf(G.st[2][i])
+  end
+ end
+end
+
+function aiHasChainableResponse(event,ctx)
+ return findAIChainResponder(event,ctx)~=nil
+end
+
+-- Fire AI's first matching face-down trap. If the behavior has a custom
+-- `activate` (e.g. needs target picking) it's used; otherwise the standard
+-- flip-anim + resolve flow runs.
+function aiActivateChainResponse()
+ if not G.chain or not G.chain.trigger then return end
+ local trig=G.chain.trigger
+ local ctx=trig.ctx or {}
+ local i,t,b=findAIChainResponder(trig.event,ctx)
+ if not i then return end
+ if b.activate then
+  b.activate{col=i,card=t,zone="st",plr=2,trigCtx=ctx}
+ else
+  activateAITrapAnim(i,t,function()
+   if b.resolve then b.resolve(2,ctx) end
+   checkWin()
+  end)
+ end
+end
+
+-- Drive the chain forward: while neither side has (or chooses to use) a response,
+-- auto-pass priority until two consecutive passes resolve it.
+-- When the player has a response, sets G.mode="opp_trap_select" and returns.
+-- When the AI has a response, fires it via aiActivateChainResponse and returns;
+-- the trap's flip animation will re-enter advanceChain on completion.
+function advanceChain()
+ while G.chain and G.chain.passes<2 do
+  local offering=G.chain.offering
+  if playerHasChainableResponse(offering) then
+   if offering==1 then
+    -- Synthesize a G.trapSelect if one doesn't exist (e.g. AI-initiated chain
+    -- where checkTraps was never called). The existing opp_trap_select UI
+    -- reads from G.trapSelect, so we have to populate it.
+    if not G.trapSelect then
+     local trig=G.chain.trigger or {}
+     G.trapSelect={event=trig.event or "chain_open",ctx=trig.ctx or {},consumed=false}
+    end
+    G.mode="opp_trap_select"
+    positionTrapSelectCursor()
+    return
+   end
+   if offering==2 then
+    aiActivateChainResponse()
+    return
+   end
+   passChainPriority()
+  else
+   passChainPriority()
+  end
+ end
+end
+
+-- Move the cursor to a face-down trap that is currently valid to activate.
+-- If the current cursor zone already holds a valid trap, leave it; otherwise
+-- scan zones in order and snap to the first match.
+function positionTrapSelectCursor()
+ local ts=G.trapSelect
+ if not ts then return end
+ local col=(G.cur and G.cur.col) or 1
+ if col<1 then col=1 elseif col>3 then col=3 end
+ G.cur={side=1,row=2,col=col}
+ if trapCanRespond(G.st[1][col],ts.event,ts.ctx) then return end
+ for i=1,3 do
+  if trapCanRespond(G.st[1][i],ts.event,ts.ctx) then G.cur.col=i; return end
+ end
 end
 
 function tickDispLp()
@@ -633,7 +1028,7 @@ end
 function deferEffects(triggered)
  if #triggered==0 then return end
  addAnim(25,function()end,function()
-  for _,e in ipairs(triggered) do triggerMonEffect(e.card,"onDestroy",e.plr) end
+  for _,e in ipairs(triggered) do fireMonHook(e.card,"onDestroy",e.plr) end
   checkEquips()
  end)
 end
@@ -644,12 +1039,12 @@ function animSpellActivation(col,zy,card,plr)
  addAnim(60,function(t,f)
   if (t//6)%2==0 then rect(zx,zy,ZW_MAIN,ZH,sc); rectb(zx,zy,ZW_MAIN,ZH,CT) end
  end,function()
-  if card.subtype=="continuous" or card.subtype=="equip" then
-   card.facedown=false
-  else
-   G.st[plr][col]=nil; table.insert(G.gy[plr],card)
+  card.facedown=false
+  if not G.chain then
+   openChain({event="spell_activation",ctx={source=card,controller=plr}},"spell")
   end
-  applyEffect(card,plr,col)
+  pushChainLink(makeSpellTrapLink(card,plr,"st",plr,col,nil))
+  advanceChain()
  end)
 end
 
@@ -671,117 +1066,161 @@ function swordParams(dx,dy)
  end
 end
 
-EFFECTS={
- darkhole=function(plr)
-  local triggered={}
-  for i=1,3 do
-   for p=1,2 do
-    local m=G.mon[p][i]
-    if m then
-     local zx,zy=monZoneXY(p,i)
-     table.insert(G.gy[p],m); G.mon[p][i]=nil
-     destroyFlash(zx,zy)
-     table.insert(triggered,{card=m,plr=p})
-    end
-   end
-  end
-  deferEffects(triggered)
- end,
- raigeki=function(plr)
-  local opp=3-plr
-  local triggered={}
-  for i=1,3 do
-   local m=G.mon[opp][i]
-   if m then
-    local zx,zy=monZoneXY(opp,i)
-    table.insert(G.gy[opp],m); G.mon[opp][i]=nil
-    destroyFlash(zx,zy)
-    table.insert(triggered,{card=m,plr=opp})
-   end
-  end
-  deferEffects(triggered)
- end,
- fissure=function(plr)
-  local opp=3-plr
-  local low,lowI=math.huge,nil
-  for i=1,3 do
-   local m=G.mon[opp][i]
-   if m and not m.facedown and m.atk<low then low=m.atk; lowI=i end
-  end
-  if lowI then
-   local m=G.mon[opp][lowI]
-   local zx,zy=monZoneXY(opp,lowI)
-   table.insert(G.gy[opp],m); G.mon[opp][lowI]=nil
-   destroyFlash(zx,zy)
-   deferEffects({{card=m,plr=opp}})
-  end
- end,
- ookazi=function(plr)
-  changeLp(3-plr,-800)
- end,
- mirrorforce=function(plr)
-  local opp=3-plr
-  local triggered={}
-  for i=1,3 do
-   local m=G.mon[opp][i]
-   if m and m.pos==1 and not m.facedown then
-    local zx,zy=monZoneXY(opp,i)
-    table.insert(G.gy[opp],m); G.mon[opp][i]=nil
-    destroyFlash(zx,zy)
-    table.insert(triggered,{card=m,plr=opp})
-   end
-  end
-  deferEffects(triggered)
- end,
- traphole=function(plr)
-  local opp=3-plr
-  local high,highI=-1,nil
-  for i=1,3 do
-   local m=G.mon[opp][i]
-   if m and m.atk>=1000 and m.atk>high then high=m.atk; highI=i end
-  end
-  if highI then
-   local m=G.mon[opp][highI]
-   local zx,zy=monZoneXY(opp,highI)
-   table.insert(G.gy[opp],m); G.mon[opp][highI]=nil
-   destroyFlash(zx,zy)
-   deferEffects({{card=m,plr=opp}})
-  end
- end,
- callhaunted=function(plr,col)
-  if plr==1 then
-   callHauntedActivate(G.st[1][col])
-  else
-   local best,bestI=-1,nil
-   for i,c in ipairs(G.gy[2]) do
-    if c.cat=="monster" and c.atk and c.atk>best then best=c.atk; bestI=i end
-   end
-   local emptyCol=firstEmpty(G.mon[2])
-   if bestI and emptyCol then
-    local m=table.remove(G.gy[2],bestI)
-    m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
-    G.mon[2][emptyCol]=m
-    local trap=G.st[2][col]
-    if trap then trap.linkedMon=m; m.linkedTrap=trap end
-   end
-  end
- end,
-}
-
-function applyEffect(card,plr,col)
- local fn=EFFECTS[card.effect]
- if fn then fn(plr,col) end
-end
-
 -- ============================================================
--- MONSTER EFFECTS
+-- BEHAVIORS  (per-card hooks — single source of truth)
 -- ============================================================
--- Each entry is a table of event handlers: onDestroy, onFlip, etc.
--- triggerMonEffect(card, event, plr) dispatches the right handler.
-MON_EFFECTS={
+-- One entry per card `effect` key. Every per-card branch in the engine reads
+-- from here. To add a new card, add a CARDS entry plus a BEHAVIORS entry —
+-- never sprinkle effect names across the rest of the file.
+--
+-- Possible fields (all optional):
+--   speed              chain speed override (else derived from cat/subtype)
+--   responseOnly       true => cannot be activated from menu, only as chain response
+--   triggers[event]    function(t,ctx) -> bool, predicate for chain response window
+--                      events: "summon", "attack", "phase", "chain_open"
+--   resolve(plr,ctx)   called when this card's chain link resolves
+--   canActivate(card)  predicate gating manual activation (menu / chain)
+--   activate(opts)     custom activation flow; opts = {col,card,zone,plr,trigCtx}
+--                      when absent, default flow (activateTrapAnim / animSpellActivation)
+--   aiCanCast(card)    AI: cast this spell from hand this turn?
+--   onDestroy(card,plr) monster hook fired when destroyed
+--   onFlip(card,plr)    monster hook fired when flipped face-up
+--   onTributed(card,plr) monster hook fired when tributed
+--   handTrap(plr,dmg,handIdx,card) hand quick-effect (Kuriboh-style)
+--   atkBonus(card)     per-card ATK bonus (Dark Magician Girl, Buster Blader)
+--   equipBonus(tgt,eq) per-equip stat bonus -> ab,db
+BEHAVIORS={
+ -- =============== SPELLS ===============
+ darkhole={
+  aiCanCast=function() return hasMonsters(1) or hasMonsters(2) end,
+  resolve=function(plr)
+   for i=1,3 do for p=1,2 do
+    if G.mon[p][i] then revealAndDestroyMon(p,i,"effect") end
+   end end
+   flushTriggers()
+  end,
+ },
+ raigeki={
+  aiCanCast=function() return hasMonsters(1) end,
+  resolve=function(plr)
+   local opp=3-plr
+   for i=1,3 do
+    if G.mon[opp][i] then revealAndDestroyMon(opp,i,"effect") end
+   end
+   flushTriggers()
+  end,
+ },
+ fissure={
+  aiCanCast=function() return hasMonsters(1) end,
+  resolve=function(plr)
+   local opp=3-plr
+   local low,lowI=math.huge,nil
+   for i=1,3 do
+    local m=G.mon[opp][i]
+    if m and not m.facedown and m.atk<low then low=m.atk; lowI=i end
+   end
+   if lowI then sendMonsterToGY(opp,lowI,"effect"); flushTriggers() end
+  end,
+ },
+ ookazi={
+  aiCanCast=function() return true end,
+  resolve=function(plr) changeLp(3-plr,-800) end,
+ },
+ unitedwestand={
+  -- Equip Spell. Activation handled by sel_equip flow; bonus computed here.
+  equipBonus=function(target,equip)
+   local tp=equip.equippedTo.plr
+   local n=0
+   for i=1,3 do if G.mon[tp][i] and not G.mon[tp][i].facedown then n=n+1 end end
+   return n*800,n*800
+  end,
+ },
+ mst={
+  -- Quick-Play Spell (speed 2 derived from subtype=quickplay).
+  canActivate=function(card)
+   for p=1,2 do for c=1,3 do
+    if G.st[p][c] and G.st[p][c]~=card then return true end
+   end end
+   return false
+  end,
+  activate=function(opts) pickMSTTargetThenActivate(opts.col,opts.card,opts.trigCtx,opts.zone) end,
+ },
+
+ -- =============== TRAPS ===============
+ mirrorforce={
+  responseOnly=true,
+  triggers={attack=function(t,ctx) return true end},
+  resolve=function(plr)
+   -- Cancel the original attack continuation (legacy "consumed" mechanism).
+   if G.trapSelect then G.trapSelect.consumed=true end
+   G.battleAnim=nil
+   local opp=3-plr
+   for i=1,3 do
+    local m=G.mon[opp][i]
+    if m and m.pos==1 and not m.facedown then sendMonsterToGY(opp,i,"effect") end
+   end
+   flushTriggers()
+  end,
+ },
+ traphole={
+  responseOnly=true,
+  triggers={summon=function(t,ctx) return not ctx.card.facedown and (ctx.card.atk or 0)>=1000 end},
+  resolve=function(plr,ctx)
+   if not ctx then return end
+   local opp=3-plr
+   if G.mon[opp][ctx.monIdx]==ctx.card then
+    sendMonsterToGY(opp,ctx.monIdx,"effect")
+    flushTriggers()
+   end
+  end,
+ },
+ callhaunted={
+  -- Continuous Trap. Manual activation from menu OR chain-response window.
+  triggers={
+   attack=function(t,ctx) return canReviveMonster(1) end,
+   phase =function(t,ctx) return canReviveMonster(1) end,
+  },
+  canActivate=function(card) return canReviveMonster(1) end,
+  activate=function(opts)
+   if opts.plr==2 then
+    -- AI path: pick best GY monster, resolve inline (no UI).
+    activateAITrapAnim(opts.col,opts.card,function()
+     aiResolveCallHaunted(opts.col,opts.card); checkWin()
+    end)
+   else
+    pickCallHauntedTargetThenActivate(opts.col,opts.card,opts.trigCtx)
+   end
+  end,
+ },
+ magicjammer={
+  responseOnly=true,
+  triggers={
+   chain_open=function(t,ctx)
+    if not G.chain or #G.chain.links==0 then return false end
+    local top=G.chain.links[#G.chain.links]
+    if not (top.source and top.source.cat=="spell") then return false end
+    return #G.hand[1]>=1
+   end,
+  },
+  activate=function(opts) pickJammerCostThenActivate(opts.col,opts.card,opts.trigCtx) end,
+ },
+
+ -- =============== MONSTERS ===============
+ kuriboh={
+  speed=2,
+  handTrap=function(plr,dmg,handIdx,card)
+   if plr==1 then
+    G.mode="trap_ask"
+    G.trapAsk={fromHand=true,handIdx=handIdx,card=card,
+     onYes=function() end,
+     onNo =function() changeLp(1,-dmg) end}
+   else
+    discardFromHand(2,handIdx,"effect")
+   end
+  end,
+ },
  sangan={
   onDestroy=function(card,plr)
-   -- Build list of eligible monsters (ATK<=1500) in owner's deck
    local items={}
    for i,id in ipairs(G.deck[plr]) do
     local d=CARDS[id]
@@ -791,7 +1230,6 @@ MON_EFFECTS={
    end
    if #items==0 then return end
    if plr==2 then
-    -- AI: auto-pick highest ATK among eligible
     local bestAtk,bestI=-1,nil
     for _,item in ipairs(items) do
      if item.atk>bestAtk then bestAtk=item.atk; bestI=item.deckIdx end
@@ -800,34 +1238,25 @@ MON_EFFECTS={
      table.insert(G.hand[2],makeCard(table.remove(G.deck[2],bestI)))
     end
    else
-    -- Player: open deck selection screen
     G.mode="sel_deck"
-    G.deckSel={
-     items=items, sel=1,
-     title="SANGAN  ATK<=1500",
+    G.deckSel={items=items,sel=1,title="SANGAN  ATK<=1500",
      onPick=function(deckIdx)
       if #G.hand[1]<MAX_HAND then
        table.insert(G.hand[1],makeCard(table.remove(G.deck[1],deckIdx)))
       end
-     end,
-    }
+     end}
    end
   end,
  },
  maneater={
   onFlip=function(card,plr)
    local function destroyTarget(tp,ti)
-    local m=G.mon[tp][ti]
-    if not m then return end
-    local zx,zy=monZoneXY(tp,ti)
-    table.insert(G.gy[tp],m); G.mon[tp][ti]=nil
-    destroyFlash(zx,zy)
-    deferEffects({{card=m,plr=tp}})
+    if not G.mon[tp][ti] then return end
+    revealAndDestroyMon(tp,ti,"effect")
+    flushTriggers()
    end
-   -- check if any monster exists to target
    if not (hasMonsters(1) or hasMonsters(2)) then return end
    if plr==2 then
-    -- AI: destroy player's highest-value monster
     local best,bestI=-1,nil
     for i=1,3 do
      local m=G.mon[1][i]
@@ -841,7 +1270,6 @@ MON_EFFECTS={
      local i=firstOccupied(G.mon[2]); if i then destroyTarget(2,i) end
     end
    else
-    -- Player: open target-select UI
     G.mode="sel_destroy"
     G.destroySel={onPick=destroyTarget}
     if hasMonsters(2) then
@@ -853,8 +1281,9 @@ MON_EFFECTS={
   end,
  },
  legion={
-  onDestroy=function(card,plr)
-   if plr==1 then legionSearch() end
+  onDestroy=function(card,plr) if plr==1 then legionSearch() end end,
+  onTributed=function(card,plr)
+   if plr==1 and not G.legionSearchUsed then G.legionSearchPending=true end
   end,
  },
  ufoturtle={
@@ -867,52 +1296,107 @@ MON_EFFECTS={
     end
    end
    if #items==0 then return end
-   local emptyCol=firstEmpty(G.mon[plr])
-   if not emptyCol then return end
+   if not firstEmpty(G.mon[plr]) then return end
    if plr==2 then
     local bestAtk,bestI=-1,nil
     for _,item in ipairs(items) do
      if item.atk>bestAtk then bestAtk=item.atk; bestI=item.deckIdx end
     end
     if bestI then
+     local emptyCol=firstEmpty(G.mon[2])
      local m=makeCard(table.remove(G.deck[2],bestI))
      m.pos=1; m.facedown=false; m.attacked=false; m.summoned=true; m.posChanged=false
      G.mon[2][emptyCol]=m
     end
    else
     G.mode="sel_deck"
-    G.deckSel={
-     items=items, sel=1,
-     title="UFO TURTLE  FIRE",
+    G.deckSel={items=items,sel=1,title="UFO TURTLE  FIRE",
      onPick=function(deckIdx)
-      local col=firstEmpty(G.mon[1])
-      if col then
+      if firstEmpty(G.mon[1]) then
        local m=makeCard(table.remove(G.deck[1],deckIdx))
        G.pendingSS={card=m,plr=1}
        G.menu={open=true,sel=1,items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}}}
       end
-     end,
-    }
+     end}
    end
+  end,
+ },
+ dmgirl={
+  atkBonus=function(card)
+   local b=0
+   for p=1,2 do for _,c in ipairs(G.gy[p]) do
+    if c.name=="Dark Magician" then b=b+300 end
+   end end
+   return b
+  end,
+ },
+ busterblader={
+  atkBonus=function(card)
+   local opp=nil
+   for p=1,2 do for i=1,3 do if G.mon[p][i]==card then opp=3-p; break end end
+    if opp then break end end
+   if not opp then return 0 end
+   local b=0
+   for i=1,3 do
+    local m=G.mon[opp][i]
+    if m and not m.facedown and m.type=="dragon" then b=b+500 end
+   end
+   for _,c in ipairs(G.gy[opp]) do
+    if c.type=="dragon" then b=b+500 end
+   end
+   return b
   end,
  },
 }
 
-function triggerMonEffect(card,event,plr)
- if event=="onDestroy" and card.linkedTrap then
-  local trap=card.linkedTrap
-  card.linkedTrap=nil; trap.linkedMon=nil
-  for p=1,2 do
-   for c=1,3 do
-    if G.st[p][c]==trap then
-     G.st[p][c]=nil; table.insert(G.gy[p],trap); break
-    end
-   end
-  end
+-- ============================================================
+-- BEHAVIOR DISPATCH
+-- ============================================================
+function behaviorOf(card) return card and card.effect and BEHAVIORS[card.effect] end
+
+-- Run a card's chain-link resolve function (does nothing if no behavior).
+function applyResolve(card,plr,ctx)
+ local b=behaviorOf(card); if b and b.resolve then b.resolve(plr,ctx) end
+end
+
+-- Fire a monster event hook (onDestroy/onFlip/onTributed).
+function fireMonHook(card,event,plr)
+ local b=behaviorOf(card); if b and b[event] then b[event](card,plr) end
+end
+
+-- Helper: does `plr` have a monster in GY and a free zone to revive into?
+function canReviveMonster(plr)
+ if not firstEmpty(G.mon[plr]) then return false end
+ for _,c in ipairs(G.gy[plr]) do if c.cat=="monster" then return true end end
+ return false
+end
+
+-- Returns true if face-down trap `t` on the field can chain to `event`/`ctx`.
+function trapCanRespond(t,event,ctx)
+ if not (t and t.facedown and not t.setThisTurn) then return false end
+ local b=behaviorOf(t); if not b or not b.triggers then return false end
+ local fn=b.triggers[event]
+ if fn and fn(t,ctx) then return true end
+ if G.chain and #G.chain.links>0 then
+  local co=b.triggers.chain_open
+  if co and co(t,ctx) then return true end
  end
- if not card.effect then return end
- local me=MON_EFFECTS[card.effect]
- if me and me[event] then me[event](card,plr) end
+ return false
+end
+
+-- AI Call of the Haunted resolve: revive AI's highest-ATK GY monster.
+function aiResolveCallHaunted(stCol,trap)
+ local best,bestI=-1,nil
+ for i,c in ipairs(G.gy[2]) do
+  if c.cat=="monster" and c.atk and c.atk>best then best=c.atk; bestI=i end
+ end
+ local emptyCol=firstEmpty(G.mon[2])
+ if bestI and emptyCol then
+  local m=table.remove(G.gy[2],bestI)
+  m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
+  G.mon[2][emptyCol]=m
+  trap.linkedMon=m; m.linkedTrap=trap
+ end
 end
 
 function startMonsterPlacement(handIdx,action)
@@ -943,10 +1427,16 @@ function buildMenu()
    if card and isMain then
     if card.cat=="spell" then
      local emptyZone=firstEmpty(G.st[1])~=nil
-     local hasTarget=hasMonsters(1) or hasMonsters(2)
-     if card.subtype~="equip" or (emptyZone and hasTarget) then
-      table.insert(items,{"ACTIVATE","cast_hand"})
+     local b=behaviorOf(card)
+     local canActivate
+     if card.subtype=="equip" then
+      canActivate = emptyZone and (hasMonsters(1) or hasMonsters(2))
+     elseif b and b.canActivate then
+      canActivate = emptyZone and b.canActivate(card)
+     else
+      canActivate = true
      end
+     if canActivate then table.insert(items,{"ACTIVATE","cast_hand"}) end
      if emptyZone then table.insert(items,{"SET","set_st"}) end
     elseif card.cat=="trap" then
      if firstEmpty(G.st[1]) then table.insert(items,{"SET","set_st"}) end
@@ -991,11 +1481,21 @@ function buildMenu()
   elseif c.row==2 and c.col>=1 and c.col<=3 then  -- spell/trap zone
    local card=G.st[1][c.col]
    if card and not card.setThisTurn then
+    local b=behaviorOf(card)
     if card.cat=="spell" and isMain then
-     local canActivate=card.subtype~="equip" or (hasMonsters(1) or hasMonsters(2))
+     local canActivate
+     if card.subtype=="equip" then
+      canActivate = hasMonsters(1) or hasMonsters(2)
+     elseif b and b.canActivate then
+      canActivate = b.canActivate(card)
+     else
+      canActivate = true
+     end
      if canActivate then table.insert(items,{"ACTIVATE","activate"}) end
-    elseif card.cat=="trap" and not RESPONSE_ONLY_EFFECTS[card.effect] then
-     table.insert(items,{"ACTIVATE","activate"})
+    elseif card.cat=="trap" and not (b and b.responseOnly) then
+     if not (b and b.canActivate) or b.canActivate(card) then
+      table.insert(items,{"ACTIVATE","activate"})
+     end
     end
    end
   end
@@ -1027,7 +1527,7 @@ function execAction(key)
   if card then
    if card.facedown then
     card.facedown=false; card.pos=1
-    triggerMonEffect(card,"onFlip",1)
+    fireMonHook(card,"onFlip",1)
    else
     card.pos=(card.pos==1) and 2 or 1
    end
@@ -1087,8 +1587,15 @@ function execAction(key)
     local startCol=firstOccupied(G.mon[1]) or firstOccupied(G.mon[2]) or 1
     G.cur={side=1,row=1,col=startCol}
    else
-    card.facedown=false
-    animSpellActivation(col,PY_S,card,1)
+    local b=behaviorOf(card)
+    if b and b.activate then
+     b.activate{col=col,card=card,zone="st",plr=1}
+    elseif card.cat=="trap" then
+     activateTrapAnim(col,card,function() applyResolve(card,1) end)
+    else
+     card.facedown=false
+     animSpellActivation(col,PY_S,card,1)
+    end
    end
   end
 
@@ -1133,38 +1640,28 @@ function resolveAttack(attacker,atkCol,target,tgtIdx)
 
  local function doSlash()
   animSwordSlash(ax,ay,tx,ty,function()
-   local dPlr=false; local dOpp=false
-   local triggered={}
    local atkV=getMonAtk(attacker); local tgtV=getMonAtk(target); local tgtDef=getMonDef(target)
    if target.pos==2 then
     if atkV>tgtDef then
-     table.insert(G.gy[2],target); G.mon[2][tgtIdx]=nil; dOpp=true
-     table.insert(triggered,{card=target,plr=2})
+     sendMonsterToGY(2,tgtIdx,"battle")
     elseif atkV<tgtDef then
      changeLp(1,-(tgtDef-atkV))
     end
    else
     if atkV>tgtV then
-     table.insert(G.gy[2],target); G.mon[2][tgtIdx]=nil
-     applyDamage(2,atkV-tgtV); dOpp=true
-     table.insert(triggered,{card=target,plr=2})
+     sendMonsterToGY(2,tgtIdx,"battle")
+     applyDamage(2,atkV-tgtV)
     elseif atkV<tgtV then
-     table.insert(G.gy[1],attacker); G.mon[1][atkCol]=nil
-     changeLp(1,-(tgtV-atkV)); dPlr=true
-     table.insert(triggered,{card=attacker,plr=1})
+     sendMonsterToGY(1,atkCol,"battle")
+     changeLp(1,-(tgtV-atkV))
     else
-     table.insert(G.gy[2],target); G.mon[2][tgtIdx]=nil
-     table.insert(G.gy[1],attacker); G.mon[1][atkCol]=nil
-     dOpp=true; dPlr=true
-     table.insert(triggered,{card=target,plr=2})
-     table.insert(triggered,{card=attacker,plr=1})
+     sendMonsterToGY(2,tgtIdx,"battle")
+     sendMonsterToGY(1,atkCol,"battle")
     end
    end
-   if dOpp then destroyFlash(COL[4-tgtIdx],OY_M) end
-   if dPlr then destroyFlash(COL[atkCol],PY_M) end
    checkWin()
-   deferEffects(triggered)
-   if wasFlipped then triggerMonEffect(target,"onFlip",2) end
+   flushTriggers()
+   if wasFlipped then fireMonHook(target,"onFlip",2) end
   end)
  end
 
@@ -1374,12 +1871,8 @@ function drawPlrSide()
   local card=G.st[1][c]
   dFieldSlot(COL[c],PY_S,card,card and card.facedown,CZ)
   if G.mode=="sel_st" and not card then dDotBorder(COL[c],PY_S,ZW_MAIN,ZH) end
-  if G.mode=="opp_trap_select" and G.trapSelect and card and card.facedown and not card.setThisTurn then
-   for _,check in ipairs(TRAP_CHECKS[G.trapSelect.event] or {}) do
-    if card.effect==check.effect and check.trigger(card,G.trapSelect.ctx) then
-     dDotBorder(COL[c],PY_S,ZW_MAIN,ZH); break
-    end
-   end
+  if G.mode=="opp_trap_select" and G.trapSelect and trapCanRespond(card,G.trapSelect.event,G.trapSelect.ctx) then
+   dDotBorder(COL[c],PY_S,ZW_MAIN,ZH)
   end
  end
  dZone(COL[4],PY_S,ZW_SPEC,ZH,CDK,"DK",#G.deck[1])
@@ -1649,8 +2142,7 @@ function handleInput()
    local ta=G.trapAsk
    G.mode="free"; G.trapAsk=nil
    if ta.fromHand then
-    table.remove(G.hand[1],ta.handIdx)
-    table.insert(G.gy[1],ta.card)
+    discardFromHand(1,ta.handIdx,"cost")
     ta.onYes()
    else
     activateTrapAnim(ta.col,ta.card,ta.onYes)
@@ -1669,6 +2161,52 @@ function handleInput()
   return
  end
 
+ -- Discard picker (e.g. Magic Jammer cost): cursor on player hand
+ if G.mode=="sel_discard" and G.discardSel then
+  local n=#G.hand[1]
+  if n==0 then G.mode="opp_trap_select"; G.discardSel=nil; positionTrapSelectCursor(); return end
+  if c.row~=3 then c.row=3; c.col=0 end
+  if btnp(2) then c.col=math.max(0,c.col-1)
+  elseif btnp(3) then c.col=math.min(n-1,c.col+1)
+  elseif btnp(4) then
+   local handIdx=c.col+1
+   local picked=G.hand[1][handIdx]
+   if picked then
+    local cb=G.discardSel.onPick
+    G.discardSel=nil; G.mode="free"
+    cb(handIdx)
+   end
+  end
+  return
+ end
+
+ -- S/T target picker (e.g. MST): cursor on any S/T zone (both sides).
+ -- UP toward opponent, DOWN toward player (matches sel_destroy / main field).
+ -- Visual col c.col maps to data index `dataIdx`: c.col on player, 4-c.col on opp.
+ if G.mode=="sel_st_target" and G.stTargetSel then
+  if c.row~=2 then c.row=2 end
+  local function dataIdx(side,vcol) return (side==2) and (4-vcol) or vcol end
+  if btnp(2) then
+   for vcol=c.col-1,1,-1 do if G.st[c.side][dataIdx(c.side,vcol)] then c.col=vcol; break end end
+  elseif btnp(3) then
+   for vcol=c.col+1,3 do if G.st[c.side][dataIdx(c.side,vcol)] then c.col=vcol; break end end
+  elseif btnp(0) then
+   if c.side==1 then c.side=2; for vcol=1,3 do if G.st[2][dataIdx(2,vcol)] then c.col=vcol; break end end end
+  elseif btnp(1) then
+   if c.side==2 then c.side=1; for vcol=1,3 do if G.st[1][vcol] then c.col=vcol; break end end end
+  elseif btnp(4) then
+   local p=c.side
+   local di=dataIdx(p,c.col)
+   local card=G.st[p][di]
+   if card and card~=G.stTargetSel.source then
+    local cb=G.stTargetSel.onPick
+    G.stTargetSel=nil; G.mode="free"
+    cb(p,di)
+   end
+  end
+  return
+ end
+
  -- Attack target selection: cursor on opponent's monster zones
  if G.mode=="sel_atk" then
   local hasOppMon=hasMonsters(2)
@@ -1678,16 +2216,25 @@ function handleInput()
    c.col=math.min(3,c.col+1)
   elseif btnp(4) then  -- A: confirm attack
    local p=G.pending
-   if checkAITraps("attack",{}) then
-    G.mode="free"; G.pending=nil
-   elseif not hasOppMon then
-    resolveAttack(p.attacker,p.atkCol,nil,nil)
-   else
-    local tgtIdx=4-c.col
-    local target=G.mon[2][tgtIdx]
-    if target then
-     resolveAttack(p.attacker,p.atkCol,target,tgtIdx)
+   local tgtIdx=4-c.col
+   local function proceedAttack()
+    -- Re-check attacker (chain may have destroyed it, e.g. Mirror Force)
+    if not p.attacker or G.mon[1][p.atkCol]~=p.attacker then
+     G.mode="free"; G.pending=nil; return
     end
+    if not hasMonsters(2) then
+     resolveAttack(p.attacker,p.atkCol,nil,nil)
+    else
+     local target=G.mon[2][tgtIdx]
+     if target then
+      resolveAttack(p.attacker,p.atkCol,target,tgtIdx)
+     end
+     -- If target is nil (cursor on empty zone), do nothing; player stays in
+     -- sel_atk and can re-navigate. Matches pre-chain behavior.
+    end
+   end
+   if not checkAITraps("attack",{att=p.attacker,atkCol=p.atkCol},proceedAttack) then
+    proceedAttack()
    end
   elseif btnp(5) then  -- B: cancel
    local col=G.pending and G.pending.atkCol or 2
@@ -1722,13 +2269,10 @@ function handleInput()
       table.insert(zones,{x=COL[tcol],y=PY_M})
      end
      animTribute(zones,function()
-      local legionTributed=false
       for _,tcol in ipairs(tribs) do
-       local m=G.mon[1][tcol]
-       if m and m.effect=="legion" then legionTributed=true end
-       table.insert(G.gy[1],m); G.mon[1][tcol]=nil
+       fireMonHook(G.mon[1][tcol],"onTributed",1)
+       sendMonsterToGY(1,tcol,"tribute")
       end
-      if legionTributed and not G.legionSearchUsed then G.legionSearchPending=true end
       G.mode="sel_mon"
       G.cur={side=1,row=1,col=firstEmpty(G.mon[1]) or 1}
      end)
@@ -1798,7 +2342,12 @@ function handleInput()
      table.remove(G.hand[1],p.handIdx)
      G.mode="free"; G.pending=nil
      G.cur={side=1,row=2,col=col}
-     animSpellActivation(col,PY_S,card,1)
+     local b=behaviorOf(card)
+     if b and b.activate then
+      b.activate{col=col,card=card,zone="st",plr=1}
+     else
+      animSpellActivation(col,PY_S,card,1)
+     end
     else
      card.facedown=true; card.setThisTurn=true
      G.st[1][col]=card
@@ -1973,207 +2522,275 @@ function promptTrap(col,card,onYes,onNo)
  G.trapAsk={col=col,card=card,onYes=onYes,onNo=onNo}
 end
 
-function callHauntedActivate(trap,onDone)
+-- Flip-up animation for an AI trap in G.st[2][stCol]. After animation, pushes
+-- a chain link whose resolveFn is `resolveFn` (the trap-specific resolution).
+-- Source disposal (GY for normal, face-up for continuous) is handled by
+-- spendChainLink at chain resolve time.
+function activateAITrapAnim(stCol,card,resolveFn)
+ card.facedown=false
+ local zx=COL[4-stCol]
+ addAnim(60,function(t,f)
+  if (t//6)%2==0 then rect(zx,OY_S,ZW_MAIN,ZH,CTR); rectb(zx,OY_S,ZW_MAIN,ZH,CT) end
+ end,function()
+  if not G.chain then openChain(nil,"trap") end
+  pushChainLink({
+   source=card, controller=2, speed=chainSpeed(card),
+   sourceLoc={zone="st",plr=2,col=stCol}, targets=nil,
+   resolveFn=resolveFn,
+  })
+  advanceChain()
+ end)
+end
+
+-- Open a chain window for a player action that the AI may respond to. If AI
+-- has a chainable response, opens chain and drives it (animation will resume
+-- the chain asynchronously). After chain resolves, runs onResolved.
+-- Returns true if a chain was opened (caller should NOT immediately proceed
+-- with the original action; the continuation will), false if AI had no
+-- response and the caller should proceed inline.
+function checkAITraps(event,ctx,onResolved)
+ if not aiHasChainableResponse(event,ctx) then return false end
+ openChain({event=event,ctx=ctx,onResolved=onResolved},"event")
+ G.chain.offering=2  -- AI gets first chance to respond
+ advanceChain()
+ return true
+end
+
+-- Flip-up animation for a player trap. After animation, pushes a chain link
+-- whose resolveFn is `resolveFn`. Source disposal (GY for normal, face-up for
+-- continuous) is handled by spendChainLink at chain resolve time.
+function activateTrapAnim(col,card,resolveFn)
+ card.facedown=false
+ local zx=COL[col]
+ addAnim(60,function(t,f)
+  if (t//6)%2==0 then rect(zx,PY_S,ZW_MAIN,ZH,CTR); rectb(zx,PY_S,ZW_MAIN,ZH,CT) end
+ end,function()
+  if not G.chain then openChain(nil,"trap") end
+  pushChainLink({
+   source=card, controller=1, speed=chainSpeed(card),
+   sourceLoc={zone="st",plr=1,col=col}, targets=nil,
+   resolveFn=resolveFn,
+  })
+  advanceChain()
+ end)
+end
+
+-- True if the player has a face-down trap that can chain to (event,ctx).
+function hasActivatableTrap(event,ctx)
+ for i=1,3 do if trapCanRespond(G.st[1][i],event,ctx) then return true end end
+ return false
+end
+
+-- Called from inside trap onYes/resolveFn callbacks. During chain resolution
+-- (G.chainResolving=true), do nothing — advanceChain owns flow control now and
+-- will prompt or resolve based on remaining responses after each link.
+function returnToTrapSelect()
+ if not G.trapSelect then return end
+ if G.chainResolving then return end
+ -- Legacy fallback for any path that bypasses the chain. Shouldn't normally
+ -- be reached now that checkTraps always opens a chain.
+ if hasActivatableTrap(G.trapSelect.event,G.trapSelect.ctx) then
+  G.mode="opp_trap_select"
+  positionTrapSelectCursor()
+ else
+  finishTrapSelect()
+ end
+end
+
+-- Clean up trap-select UI state. The continuation (ctx.proceed/doAttack) is
+-- run from resolveChain via chain.trigger.onResolved, not here.
+function finishTrapSelect()
+ G.mode="free"
+ G.trapSelect=nil
+end
+
+function checkTraps(event,ctx)
+ if not hasActivatableTrap(event,ctx) then return false end
+ -- Open a chain window with the caller's continuation; chain.trigger.onResolved
+ -- runs after both players pass (and the chain has fully resolved LIFO).
+ local cont=ctx and (ctx.doAttack or ctx.proceed)
+ openChain({event=event,ctx=ctx,onResolved=cont},"event")
+ G.chain.offering=1  -- player gets first chance to respond
+ G.trapSelect={event=event,ctx=ctx,consumed=false}
+ G.mode="opp_trap_select"
+ positionTrapSelectCursor()
+ return true
+end
+
+-- Bounce back to the opp_trap_select UI when an activation aborts (e.g. picker
+-- found no valid target). Re-snaps cursor to a valid trap; falls back to "free"
+-- mode if no chain response window is active.
+local function abortToTrapSelect()
+ if G.trapSelect then
+  G.mode="opp_trap_select"; positionTrapSelectCursor()
+ else
+  G.mode="free"
+ end
+end
+
+-- Push a chain link for an activation. Handles the three flow variants so the
+-- per-card pickers don't repeat the anim + chain-link-push boilerplate.
+--   zone="st", cat="trap"   -> activateTrapAnim
+--   zone="st", cat="spell"  -> animSpellActivationCustom (card already in zone)
+--   zone="hand", cat="spell"-> place in first free S/T (or push from hand to GY)
+function pushActivationLink(opts,resolveFn)
+ local card,col,zone = opts.card, opts.col, opts.zone
+ local plr = opts.plr or 1
+ if zone=="hand" and card.cat=="spell" then
+  local stCol=firstEmpty(G.st[plr])
+  if stCol then
+   G.st[plr][stCol]=card; card.facedown=false
+   for i,h in ipairs(G.hand[plr]) do
+    if h==card then table.remove(G.hand[plr],i); break end
+   end
+   animSpellActivationCustom(stCol,(plr==1) and PY_S or OY_S,card,plr,resolveFn)
+  else
+   addToGY(plr,card,"effect")
+   if not G.chain then
+    openChain({event="spell_activation",ctx={source=card,controller=plr}},"spell")
+   end
+   pushChainLink({source=card,controller=plr,speed=chainSpeed(card),
+    sourceLoc=nil,targets=opts.targets,resolveFn=resolveFn})
+   advanceChain()
+  end
+ elseif card.cat=="trap" then
+  activateTrapAnim(col,card,resolveFn)
+ else
+  animSpellActivationCustom(col,(plr==1) and PY_S or OY_S,card,plr,resolveFn)
+ end
+end
+
+-- Call of the Haunted: pick a GY monster, then push the chain link with the
+-- pre-captured target index. Picking happens at activation time (TCG-correct)
+-- so chain resolution stays synchronous (no UI mid-resolve).
+function pickCallHauntedTargetThenActivate(col,card,ctx)
  local items={}
  for i,c in ipairs(G.gy[1]) do
   if c.cat=="monster" then
    table.insert(items,{deckIdx=i,name=c.name,atk=c.atk,def=c.def,lvl=c.lvl,desc=c.desc})
   end
  end
- if #items==0 then if onDone then onDone() end; return end
+ if #items==0 then abortToTrapSelect(); return end
  G.mode="sel_deck"
- G.deckSel={
-  items=items,sel=1,title="CALL OF THE HAUNTED",
+ G.deckSel={items=items,sel=1,title="CALL OF THE HAUNTED",
   onPick=function(gyIdx)
-   local emptyCol=firstEmpty(G.mon[1])
-   if emptyCol then
-    local m=table.remove(G.gy[1],gyIdx)
+   pushActivationLink({card=card,col=col,zone="st",plr=1},function()
+    local emptyCol=firstEmpty(G.mon[1])
+    local m=emptyCol and G.gy[1][gyIdx]
+    if not (emptyCol and m and m.cat=="monster") then return end
+    table.remove(G.gy[1],gyIdx)
     m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
     G.mon[1][emptyCol]=m
-    for c=1,3 do
-     if G.st[1][c]==trap then trap.linkedMon=m; m.linkedTrap=trap; break end
-    end
-   end
-   if onDone then onDone() end
-  end,
- }
+    card.linkedMon=m; m.linkedTrap=card
+   end)
+  end}
 end
 
--- Flip-up animation for an AI trap in G.st[2][stCol], then calls onDone.
-function activateAITrapAnim(stCol,card,onDone)
- card.facedown=false
- local zx=COL[4-stCol]
- addAnim(60,function(t,f)
-  if (t//6)%2==0 then rect(zx,OY_S,ZW_MAIN,ZH,CTR); rectb(zx,OY_S,ZW_MAIN,ZH,CT) end
- end,function()
-  G.st[2][stCol]=nil; table.insert(G.gy[2],card)
-  onDone()
- end)
-end
-
--- Auto-activate the first matching AI face-down trap against a player action.
-function checkAITraps(event,ctx)
- if event=="summon" then
-  -- Trap Hole: fires on a face-up summon with ATK >= 1000
-  if not ctx.card.facedown and (ctx.card.atk or 0)>=1000 then
-   for i=1,3 do
-    local t=G.st[2][i]
-    if t and t.facedown and not t.setThisTurn and t.effect=="traphole" then
-     activateAITrapAnim(i,t,function()
-      if G.mon[1][ctx.monIdx]==ctx.card then
-       destroyFlash(COL[ctx.monIdx],PY_M)
-       table.insert(G.gy[1],ctx.card); G.mon[1][ctx.monIdx]=nil
-       deferEffects({{card=ctx.card,plr=1}})
-       checkWin()
-      end
-     end)
-     return true
-    end
-   end
-  end
- elseif event=="attack" then
-  -- Mirror Force: fires on any attack declaration
-  for i=1,3 do
-   local t=G.st[2][i]
-   if t and t.facedown and not t.setThisTurn and t.effect=="mirrorforce" then
-    activateAITrapAnim(i,t,function()
-     applyEffect(t,2)  -- mirrorforce(2) destroys all player ATK monsters
-     checkWin()
-    end)
-    return true
-   end
-  end
- end
- return false
-end
-
-TRAP_CHECKS={
- summon={
-  {effect="traphole",
-   trigger=function(t,ctx) return not ctx.card.facedown and (ctx.card.atk or 0)>=1000 end,
-   onYes=function(t,ctx)
-    if G.mon[2][ctx.monIdx]==ctx.card then
-     table.insert(G.gy[2],ctx.card); G.mon[2][ctx.monIdx]=nil
-    end
-    returnToTrapSelect()
-   end},
- },
- attack={
-  {effect="mirrorforce",
-   trigger=function(t,ctx) return true end,
-   onYes=function(t,ctx)
-    G.trapSelect.consumed=true; G.battleAnim=nil; applyEffect(t,1); returnToTrapSelect() end},
-  {effect="callhaunted",
-   trigger=function(t,ctx)
-    for _,c in ipairs(G.gy[1]) do if c.cat=="monster" then
-     return firstEmpty(G.mon[1])~=nil end end return false end,
-   onYes=function(t,ctx) callHauntedActivate(t,returnToTrapSelect) end},
- },
- phase={
-  {effect="callhaunted",
-   trigger=function(t,ctx)
-    for _,c in ipairs(G.gy[1]) do if c.cat=="monster" then
-     return firstEmpty(G.mon[1])~=nil end end return false end,
-   onYes=function(t,ctx) callHauntedActivate(t,returnToTrapSelect) end},
- },
-}
-
-function activateTrapAnim(col,card,onYes)
- card.facedown=false
- local zx=COL[col]
- addAnim(60,function(t,f)
-  if (t//6)%2==0 then rect(zx,PY_S,ZW_MAIN,ZH,CTR); rectb(zx,PY_S,ZW_MAIN,ZH,CT) end
- end,function()
-  if card.subtype~="continuous" then G.st[1][col]=nil; table.insert(G.gy[1],card) end
-  onYes()
- end)
-end
-
-function hasActivatableTrap(event,ctx)
- local checks=TRAP_CHECKS[event]
- if not checks then return false end
- for _,check in ipairs(checks) do
-  for i=1,3 do
-   local t=G.st[1][i]
-   if t and t.facedown and not t.setThisTurn and t.effect==check.effect and check.trigger(t,ctx) then
-    return true
-   end
-  end
- end
- return false
-end
-
-function returnToTrapSelect()
- if not G.trapSelect then return end
- if hasActivatableTrap(G.trapSelect.event,G.trapSelect.ctx) then
-  G.mode="opp_trap_select"
-  -- move cursor to first valid trap if current is no longer activatable
-  local col=G.cur.col
-  local valid=false
-  for _,check in ipairs(TRAP_CHECKS[G.trapSelect.event] or {}) do
-   local t=G.st[1][col]
-   if t and t.facedown and not t.setThisTurn and t.effect==check.effect and check.trigger(t,G.trapSelect.ctx) then
-    valid=true; break
-   end
-  end
-  if not valid then
-   for _,check in ipairs(TRAP_CHECKS[G.trapSelect.event] or {}) do
-    for i=1,3 do
-     local t=G.st[1][i]
-     if t and t.facedown and not t.setThisTurn and t.effect==check.effect and check.trigger(t,G.trapSelect.ctx) then
-      G.cur={side=1,row=2,col=i}; return
+-- Magic Jammer: pay the discard cost at activation, then push a link that
+-- negates the chain link directly below it (the spell being responded to).
+function pickJammerCostThenActivate(col,card,ctx)
+ if #G.hand[1]==0 then abortToTrapSelect(); return end
+ G.mode="sel_discard"
+ G.discardSel={title="MAGIC JAMMER COST",prompt="Pick a card to discard",
+  onPick=function(handIdx)
+   discardFromHand(1,handIdx,"cost")
+   pushActivationLink({card=card,col=col,zone="st",plr=1},function(self)
+    local links=G.chain.links
+    for i=#links,1,-1 do
+     if links[i]==self then
+      if i<=1 then return end
+      local target=links[i-1]
+      target.negated=true
+      local loc=target.sourceLoc
+      if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col) end
+      return
      end
     end
-   end
-  end
- else
-  finishTrapSelect()
- end
+   end)
+  end}
+ G.cur={side=1,row=3,col=0}  -- cursor onto hand
 end
 
-function finishTrapSelect()
- local ts=G.trapSelect
- G.mode="free"; G.trapSelect=nil
- if not ts.consumed then
-  if ts.ctx.doAttack then ts.ctx.doAttack()
-  elseif ts.ctx.proceed then ts.ctx.proceed()
-  end
+-- MST: pick a face-up OR face-down S/T target, then push the chain link.
+-- zone="st" if activating from field, "hand" if from hand (quick-play).
+function pickMSTTargetThenActivate(col,card,ctx,zone)
+ local hasAny=false
+ for p=1,2 do for c=1,3 do if G.st[p][c] and G.st[p][c]~=card then hasAny=true end end end
+ if not hasAny then
+  if zone=="hand" then G.mode="free" else abortToTrapSelect() end
+  return
  end
+ G.mode="sel_st_target"
+ G.stTargetSel={title=(zone=="hand") and "MST" or "MST (CHAINED)",
+  source=card,zone=zone,col=col,
+  onPick=function(targetPlr,targetCol)
+   pushActivationLink({card=card,col=col,zone=zone,plr=1,
+                        targets={plr=targetPlr,col=targetCol}},function()
+    if G.st[targetPlr][targetCol] then revealAndDestroyST(targetPlr,targetCol) end
+   end)
+  end}
+ -- Position cursor on first valid target (opp side uses mirrored visual cols)
+ for p=1,2 do for c=1,3 do
+  if G.st[p][c] and G.st[p][c]~=card then
+   local vcol=(p==2) and (4-c) or c
+   G.cur={side=p,row=2,col=vcol}; goto stcursor_done
+  end
+ end end
+ ::stcursor_done::
 end
 
-function checkTraps(event,ctx)
- if not hasActivatableTrap(event,ctx) then return false end
- G.trapSelect={event=event,ctx=ctx,consumed=false}
- G.mode="opp_trap_select"
- for _,check in ipairs(TRAP_CHECKS[event] or {}) do
-  for i=1,3 do
-   local t=G.st[1][i]
-   if t and t.facedown and not t.setThisTurn and t.effect==check.effect and check.trigger(t,ctx) then
-    G.cur={side=1,row=2,col=i}; return true
-   end
+-- Variant of animSpellActivation that uses a custom resolveFn (for targeting
+-- spells like MST). Identical animation/flow as animSpellActivation but the
+-- chain link's resolveFn is whatever the caller provides.
+function animSpellActivationCustom(col,zy,card,plr,resolveFn)
+ local zx=(plr==1) and COL[col] or COL[4-col]
+ local sc=card.cat=="spell" and CSP or CTR
+ addAnim(60,function(t,f)
+  if (t//6)%2==0 then rect(zx,zy,ZW_MAIN,ZH,sc); rectb(zx,zy,ZW_MAIN,ZH,CT) end
+ end,function()
+  card.facedown=false
+  if not G.chain then
+   openChain({event="spell_activation",ctx={source=card,controller=plr}},"spell")
   end
- end
- return true
+  pushChainLink({
+   source=card, controller=plr, speed=chainSpeed(card),
+   sourceLoc={zone="st",plr=plr,col=col}, targets=nil,
+   resolveFn=resolveFn,
+  })
+  advanceChain()
+ end)
 end
 
 function handleOppTrapSelectInput()
  local ts=G.trapSelect
+ -- Defensive: ensure cursor is on player's S/T row in case any prior path
+ -- (picker bounce-back, special-zone col) left it elsewhere.
+ G.cur.side=1; G.cur.row=2
+ if G.cur.col<1 then G.cur.col=1 elseif G.cur.col>3 then G.cur.col=3 end
  if btnp(2) then G.cur.col=math.max(1,G.cur.col-1)
  elseif btnp(3) then G.cur.col=math.min(3,G.cur.col+1)
  elseif btnp(4) then
   local col=G.cur.col
   local card=G.st[1][col]
-  if card and card.facedown and not card.setThisTurn then
-   for _,check in ipairs(TRAP_CHECKS[ts.event] or {}) do
-    if card.effect==check.effect and check.trigger(card,ts.ctx) then
-     G.mode="free"
-     activateTrapAnim(col,card,function() check.onYes(card,ts.ctx) end)
-     return
-    end
+  if trapCanRespond(card,ts.event,ts.ctx) then
+   G.mode="free"
+   local b=behaviorOf(card)
+   if b and b.activate then
+    b.activate{col=col,card=card,zone="st",plr=1,trigCtx=ts.ctx}
+   else
+    activateTrapAnim(col,card,function() applyResolve(card,1,ts.ctx) end)
    end
   end
  elseif btnp(5) then
-  finishTrapSelect()
+  -- Player passes priority. If a chain is open, advance it (may resolve, may
+  -- pass to AI then prompt player again — keep G.trapSelect alive in case).
+  if G.chain then
+   passChainPriority()
+   advanceChain()
+   if not G.chain then finishTrapSelect() end
+  else
+   finishTrapSelect()
+  end
  end
 end
 
@@ -2183,14 +2800,13 @@ end
 AI_DELAY=40  -- frames between AI actions (~0.67s at 60fps)
 
 function aiDoMain()
- local plrHasMon=hasMonsters(1)
- -- Activate direct-damage / board-wipe spells (one per tick)
+ -- Activate direct-damage / board-wipe spells (one per tick).
+ -- A spell is castable iff its BEHAVIORS entry has aiCanCast(card) returning true.
  for i=#G.hand[2],1,-1 do
   local card=G.hand[2][i]
   if card.cat=="spell" then
-   local ef=card.effect
-   local doIt=(ef=="ookazi")
-           or ((ef=="raigeki" or ef=="fissure" or ef=="darkhole") and plrHasMon)
+   local b=behaviorOf(card)
+   local doIt=b and b.aiCanCast and b.aiCanCast(card)
    if doIt then
     table.remove(G.hand[2],i)
     local stIdx=nil
@@ -2199,7 +2815,17 @@ function aiDoMain()
      G.st[2][stIdx]=card
      animSpellActivation(stIdx,OY_S,card,2)
     else
-     table.insert(G.gy[2],card); applyEffect(card,2)
+     -- No S/T zone free: card resolves directly from hand to GY.
+     addToGY(2,card,"effect")
+     if not G.chain then openChain(nil,"spell") end
+     pushChainLink({
+      source=card, controller=2, speed=chainSpeed(card),
+      sourceLoc=nil, targets=nil,
+      resolveFn=function(self)
+       applyResolve(self.source,self.controller,nil)
+      end,
+     })
+     advanceChain()
     end
     return true
    end
@@ -2251,7 +2877,7 @@ function aiDoMain()
   end
   animTribute(zones,function()
    for _,tcol in ipairs(tribs) do
-    table.insert(G.gy[2],G.mon[2][tcol]); G.mon[2][tcol]=nil
+    sendMonsterToGY(2,tcol,"tribute")
    end
    local empI=firstEmpty(G.mon[2])
    card.summoned=true
@@ -2280,39 +2906,29 @@ function aiResolveAttack(attacker,atkCol,target,tgtCol)
 
  local function doSlash()
   animSwordSlash(ax,ay,tx,ty,function()
-   local dPlr=false; local dOpp=false
-   local triggered={}
    local atkV=getMonAtk(attacker); local tgtV=getMonAtk(target); local tgtDef=getMonDef(target)
    if target.pos==2 then
     if atkV>tgtDef then
-     table.insert(G.gy[1],target); G.mon[1][tgtCol]=nil; dPlr=true
-     table.insert(triggered,{card=target,plr=1})
+     sendMonsterToGY(1,tgtCol,"battle")
     elseif atkV<tgtDef then
      changeLp(2,-(target.def-atkV))
     end
    else
     if atkV>tgtV then
-     table.insert(G.gy[1],target); G.mon[1][tgtCol]=nil
-     applyDamage(1,atkV-tgtV); dPlr=true
-     table.insert(triggered,{card=target,plr=1})
+     sendMonsterToGY(1,tgtCol,"battle")
+     applyDamage(1,atkV-tgtV)
     elseif atkV<tgtV then
-     table.insert(G.gy[2],attacker); G.mon[2][atkCol]=nil
-     changeLp(2,-(tgtV-atkV)); dOpp=true
-     table.insert(triggered,{card=attacker,plr=2})
+     sendMonsterToGY(2,atkCol,"battle")
+     changeLp(2,-(tgtV-atkV))
     else
-     table.insert(G.gy[1],target); G.mon[1][tgtCol]=nil
-     table.insert(G.gy[2],attacker); G.mon[2][atkCol]=nil
-     dPlr=true; dOpp=true
-     table.insert(triggered,{card=target,plr=1})
-     table.insert(triggered,{card=attacker,plr=2})
+     sendMonsterToGY(1,tgtCol,"battle")
+     sendMonsterToGY(2,atkCol,"battle")
     end
    end
-   if dPlr then destroyFlash(COL[tgtCol],PY_M) end
-   if dOpp then destroyFlash(COL[4-atkCol],OY_M) end
    G.battleAnim=nil
    checkWin()
-   deferEffects(triggered)
-   if wasFlipped then triggerMonEffect(target,"onFlip",1) end
+   flushTriggers()
+   if wasFlipped then fireMonHook(target,"onFlip",1) end
   end)
  end
 
@@ -2379,7 +2995,7 @@ function aiDoNextAttack()
 end
 
 function aiTick()
- if G.active~=2 or G.winner or #ANIM>0 or G.menu.open or G.infoCard or G.mode=="trap_ask" or G.mode=="sel_deck" or G.mode=="sel_destroy" or G.mode=="opp_trap_select" then return end
+ if G.active~=2 or G.winner or #ANIM>0 or G.menu.open or G.infoCard or G.mode=="trap_ask" or G.mode=="sel_deck" or G.mode=="sel_destroy" or G.mode=="opp_trap_select" or G.mode=="sel_discard" or G.mode=="sel_st_target" then return end
  G.aiTimer=G.aiTimer-1
  if G.aiTimer>0 then return end
  G.aiTimer=AI_DELAY
@@ -2984,6 +3600,8 @@ function TIC()
  drawCursor()
  drawAnims()
  drawPanel()
+ drawChain()
+ drawModeBanner()
  if G.mode=="gy_view" and G.gyView then drawGYView() end
  if G.mode=="sel_deck" and G.deckSel then drawDeckSelect() end
  if G.infoCard then drawDBInfo(G.infoCard) end
@@ -3152,8 +3770,6 @@ end
 -- </TILES>
 
 -- <TILES1>
--- 000:0f7770000f7770900ff770090ff7775000f7770500ff7755000f7755000f7799
--- 001:0000000055090000999000000550050055055550555900505550000059955000
 -- 002:000000000000000f0000000f0000000f0000000f0000000f0000000f0000000f
 -- 003:0000000000000000700000007000000070000000700000007000000070000000
 -- 004:000000000000000000000000000000000000000000000000000000000000000f
@@ -3168,8 +3784,6 @@ end
 -- 013:ffffffffffffffffffffffff2fffffff82ffffff882fffff8882ffff08882fff
 -- 014:fffff0ffffff070ffff0770ffff0770ffff07770ffff0777fffff077fffff07f
 -- 015:f0ffffff070fffff0770ffff0770ffff7770ffff770fffff70ffffff70ffffff
--- 016:0000f79900000f9900000995000f795900078555ff3305553ff0555533355555
--- 017:59555050505555005555300009553700559555005555555395555555f0555555
 -- 018:0000000f0000000f0000000f0000008800000008000000080000000000000000
 -- 019:7000000070000000700000008800000080000000800000000000000000000000
 -- 020:000000f700000f770008f7700000870000080800008000000000000000000000
@@ -3528,10 +4142,22 @@ end
 -- 065:55000000555050555550555555555555155555559bbb55559b5455555555555d
 -- 066:4f7744444f7774944ff774494ff7745044f7770d44ff7755444f7755444f7799
 -- 067:4444444455494444999444445544454455455554555955545555554459955544
+-- 068:55dd5555555dd55555555d57555dd557555d55500055d5570075d55000075551
+-- 069:5777755df77777557888f7508888778587087887088870778888771107787111
+-- 070:441614641116666c1116666c1116644c114d465c416664fc1111445c11144444
+-- 071:cc05c411cdd00cc50ddd0cc1000000c8c00000c540000cc1482004c542224241
+-- 072:66ddd6666dddd663dddd66e3dddd60e3dddd60e36dddde776666631766666033
+-- 073:66d66ddd36dddddd3e6ddddd3e06dddd3e06dddd77edd6dd713d66d633366666
 -- 080:5d5555b55d555559ddd5dd94dddddd11dddddd11dddd9911ddb99199ddb9bddd
 -- 081:595bbbdd5995bbdd19599ddd9bbbdddddb999dddd999999d99dddddd9fdddddd
 -- 082:4444f79944444f99444449954444795944448555444405554440555544455554
 -- 083:5955555455555544555544440955444455955544555555549955555544455555
+-- 084:7707557100705510000d008100dd888150080808500888885808888808008880
+-- 085:7887711877771118077111801771188807188808878888880888880800008888
+-- 086:1f4544241cc502224cc00022cc000005c5000dd0cc00ddd04c50d05c14cccccc
+-- 087:24242451544241114484ddd144661111c4d61114c4641d11c466681144646141
+-- 088:d6666ae3dd6663a0dd66673ad666a37ad6062a0a737773a27337330a7733770a
+-- 089:3ea666660a36666da37666dda73a66dda0a260dd2a377737a0337337a0773377
 -- 192:000070050000500000500000000005000500000005000000000000055000005f
 -- 193:0005550005057775000000500550000000000505000000057c505770fc700700
 -- 194:5555522f555552af555552af2555552f555550af2555502f2255555f5055555f
@@ -3564,6 +4190,22 @@ end
 -- 221:eeee5555d5555555d5555555e7f755507ff75555dff7e7f5fff7fff7ffffffff
 -- 222:54aa4495aa5444447775444477785454f7779959777f7995ff7f7777a77f7777
 -- 223:499990884829997940490000843087774007777777777777777f7777f777277f
+-- 224:cf0c444c40f440cc00ffccc44004c0f40040f4f00400cf0000004ff0404c40f4
+-- 225:00000c00cc44c40c4400cc44444440000004c004444cc440000004c400000004
+-- 226:00dddd0d00dddd0d000ddd0d000ddddd0000d00d0000d00d0000d00d000d000d
+-- 227:dd0ddd00dddddd00d0ddd000d0ddd000d00dd000d00dd000000d0000000d0000
+-- 228:d56778dd0556828d0ddd682d000d66dd5006dddd05675ddd56667f5d56666577
+-- 229:7ddddd00df0dd00050770000500ff000dd007780dd000828dd000dd280500d00
+-- 230:ddedddeededddedddeddedfddeddeddf0e00e00f0ecce0f00e0cce000ecc0cee
+-- 231:eedddeddddedddeddfdeddedfddeddedf00e00e00f0ecce000ecc0e0eec0cce0
+-- 240:00cc0cf0004040f40040c0f0404000ff04004000c0000000cc00000004c4cccc
+-- 241:444400044400000c044004c0400000400000440cf4004ccc004cc404cccc0040
+-- 242:0000d0000000d00d5555bb3d553311115b311188553b31115555533355555555
+-- 243:d000d000000d000033bd5555111d33558811b3b51113b3553335555555555555
+-- 244:dd66ddd5d0ddddd0d0ddd550077f077f5dd077776ddddddddddddddddddddddd
+-- 245:728000000020000000000000000080007777900007770220d0009080ddd00000
+-- 246:00c0000c0cce00cc0c00eeeccc00000cc00f000cc000000c0000000c0000000c
+-- 247:c0000c00cc00ecc0ceee00c0c00000ccc000000cc000f000c0000000c0000000
 -- </SPRITES1>
 
 -- <WAVES>
@@ -3587,4 +4229,3 @@ end
 -- <PALETTE1>
 -- 000:0e0e0eaa0000ce5d143469100075d2182875e9258c7d7d7d653010ffc671ffee307dc22053e4f77114b2ee81eaeeeeee
 -- </PALETTE1>
-
