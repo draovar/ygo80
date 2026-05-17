@@ -122,7 +122,7 @@ PH_DRAW=1; PH_STBY=2; PH_MAIN=3; PH_BATTLE=4; PH_END=5
 
 -- Gameplay constants
 START_LP   = 4000
-MAX_DECK   = 20    -- pmem can hold up to 24 IDs (4 slots × 6); see dbLoad/dbSave
+MAX_DECK   = 20    -- pmem holds 20 IDs (4 slots × 5 at 6 bits); see dbLoad/dbSave
 MAX_COPIES = 3     -- max copies of a single card in one deck
 
 NAME_SCROLL_PAUSE= 300  -- frames to hold at start/end of name scroll
@@ -210,23 +210,62 @@ CARDS={
   desc="Target 1 Spell/Trap on the field; destroy that target."},
  {name="Magic Jammer",  cat="trap", subtype="counter", effect="magicjammer", spr=482, bg=14,
   desc="When a Spell is activated: Discard 1 card; negate that activation, and destroy that card."},
+  {name="Vorse Raider",cat="monster",type="beast-barrior",  attr="dark",  atk=1900, def=1200,    lvl=4, spr=330, bg=14,
+  desc="This wicked Beast-Warrior does every horrid thing imaginable, and loves it! His axe bears the marks of his countless victims."},
+ {name="Thousand Knives",cat="spell", subtype="normal",     effect="thousandknives", spr=484, bg=1,
+  desc="If you control 'Dark Magician': Target 1 monster your opponent controls; destroy that target."},
+ {name="Swords of Revealing Light",cat="spell", subtype="continuous", effect="swords", spr=486, bg=1,
+  desc="Your opponent's monsters cannot declare an attack. Destroyed during your opponent's 3rd End Phase."},
+ {name="Pot of Greed", cat="spell", subtype="normal",       effect="potofgreed",     spr=488, bg=14,
+  desc="Draw 2 cards."},
+ {name="Monster Reborn",cat="spell", subtype="normal",      effect="monsterreborn",  spr=490, bg=14,
+  desc="Target 1 monster in either GY; Special Summon it to your field in ATK position."},
+ {name="The Stern Mystic",cat="monster", type="spellcaster", attr="light", effect="sternmystic", atk=1500, def=1200, lvl=4, spr=324, bg=14,
+  desc="FLIP: Both players reveal all face-down cards on the field. After this, return them to their original positions."},
+ {name="Double Coston", cat="monster", type="zombie",      attr="dark",  effect="doublecoston", atk=1700, def=1650, lvl=4, spr=326, bg=3,
+  desc="If used as a Tribute for the Tribute Summon of a DARK monster, this card is treated as 2 Tributes."},
+ {name="Jinzo",          cat="monster", type="machine",     attr="dark",  effect="jinzo", atk=2400, def=1500, lvl=6, spr=328, bg=15,
+  desc="While this card is face-up on the field, Trap Cards cannot be activated."},
+ {name="Gravekeeper's Curse",cat="monster",type="spellcaster",attr="dark",effect="gkcurse",atk=800,def=600,lvl=3,spr=354,bg=1,
+  desc="Each time this card is Normal or Special Summoned, inflict 800 damage to your opponent."},
+ {name="Gravekeeper's Assailant",cat="monster",type="spellcaster",attr="dark",effect="gkassailant",atk=1500,def=1500,lvl=4,spr=352,bg=14,
+  desc="If 'Necrovalley' is on the field, when this card attacks: you can change the battle position of 1 monster your opponent controls."},
+ {name="Gravekeeper's Spy",cat="monster",type="spellcaster",attr="dark",effect="gkspy",atk=1200,def=2000,lvl=4,spr=334,bg=14,
+  desc="FLIP: Special Summon 1 'Gravekeeper's' monster from your Deck."},
+ {name="Necrovalley",cat="spell",subtype="field",effect="necrovalley",spr=416,bg=14,
+  desc="All 'Gravekeeper's' monsters gain 500 ATK/DEF. Negate any card effect that moves a card from a Graveyard."},
 }
 -- IDs above are pmem-stable: only append new cards, never reorder.
--- 27=MST, 28=Magic Jammer
+-- 27=MST, 28=Magic Jammer, 29=Vorse Raider, 30=Thousand Knives,
+-- 31=Swords of Revealing Light, 32=Pot of Greed, 33=Monster Reborn,
+-- 34=The Stern Mystic, 35=Double Coston, 36=Jinzo,
+-- 37=Gravekeeper's Curse, 38=Gravekeeper's Assailant, 39=Gravekeeper's Spy,
+-- 40=Necrovalley
 
-DECK1={1,1,1, 3,3,3, 2,2, 2,5, 25,28,28, 24,27, 27,12, 14,15,18}
---  Kuriboh x3, Sangan x3, ManEaterBug x2, 7ColorFish x1, La Jinn x1,
---  Call of Haunted x1, Magic Jammer x2, Trap Hole x2, MST x2, DarkMagician x1,
---  Feral Imp, Rogue Doll, Dark Hole  (total=20)
+DECK1={25,28,24,27,12,14,15,18, 34,34,32,34, 34,34,36, 37, 37 ,38, 38 ,39, 39, 40, 40, 37, 37 ,38, 38 ,39, 39, 40, 40}
+--  Kuriboh x1, Sangan x2, ManEaterBug x1, 7ColorFish x1, Call of Haunted x1,
+--  Magic Jammer x1, Trap Hole x1, MST x1, DarkMagician x1, Feral Imp, Rogue Doll,
+--  Dark Hole, Thousand Knives, Swords of Revealing Light, Pot of Greed,
+--  Monster Reborn, The Stern Mystic, Double Coston, Jinzo,
+--  Gravekeeper's Curse/Assailant/Spy, Necrovalley  (total=24)
 
-DECK2={2,2, 3,3, 4,4, 9,9, 10, 11, 13,
-       18, 19, 20, 21, 21, 23, 23 ,24, 24}
---  Man-EaterBug x2(flip), Sangan x2(effect), GiantSoldier x2(highDEF),
---  AquaMadoor x2(highDEF), MysticalElf x1(highDEF),
---  SummonedSkull x1(tribute1), RedEyesBDragon x1(tribute2)  [10 monsters]
---  DarkHole, Raigeki, Fissure, Ookazi x2                    [5 spells]
---  MirrorForce x2, TrapHole x3                              [5 traps]
---  total=20
+-- Opponent decks. 20 cards each, themed per character. Only cards the AI can
+-- pilot are used (no Call of Haunted, MST, Magic Jammer, equips or extra-summon
+-- monsters). Thousand Knives is player-only here as no opponent deck runs
+-- Dark Magician, which it requires.
+DECK_YUGI ={15,10,9,14,1,1,3,3,    18,21,21,  23,23,24,  31,32,33,  34,35,36}
+DECK_JOEY ={13,7,6,29,5,8,2,2,     19,21,21,  24,23,23,  31,32,33,  34,35,36}
+DECK_KAIBA={11,11,13,13,7,6,29,    18,19,20,  23,23,24,24,  31,32,33,  34,35,36}
+DECK_MARIK={18,19,21,  24,23,23,  31,32,33,  34,35,36, 37, 37 ,38, 38 ,39, 39, 40, 40}
+
+-- Selectable opponents. spr = top-left tile of a 32x32 (4x4 tile) portrait.
+OPPONENTS={
+ {name="YUGI",  spr=384, deck=DECK_YUGI},
+ {name="JOEY",  spr=388, deck=DECK_JOEY},
+ {name="KAIBA", spr=392, deck=DECK_KAIBA},
+ {name="MARIK", spr=396, deck=DECK_MARIK},
+}
+OPP_SEL=1
 
 function shuffle(t)
  for i=#t,2,-1 do
@@ -258,6 +297,51 @@ end
 -- Tributes required to normal-summon a monster of given level
 function tribsNeeded(lvl)
  return (lvl<=4) and 0 or (lvl<=6) and 1 or 2
+end
+
+-- Tribute worth of monster `m` toward summoning `summonCard`: Double Coston
+-- counts as 2 for a DARK Tribute Summon. A nil monster is worth 0.
+function tributeValueOf(summonCard,m)
+ if not m then return 0 end
+ if m.effect=="doublecoston" and summonCard and summonCard.attr=="dark" then
+  return 2
+ end
+ return 1
+end
+
+-- Total tribute worth of the columns currently selected in G.pending.tributes.
+function tributeTotal(p)
+ local n=0
+ for _,col in ipairs(p.tributes) do n=n+tributeValueOf(p.card,G.mon[1][col]) end
+ return n
+end
+
+-- Total tribute worth of all of `plr`'s monsters, for summoning `summonCard`.
+function fieldTributeValue(summonCard,plr)
+ local n=0
+ for c=1,3 do n=n+tributeValueOf(summonCard,G.mon[plr][c]) end
+ return n
+end
+
+-- AI: pick which monster columns to tribute for `summonCard` (needs `trib`
+-- tributes). Prefers a lone monster that covers the whole cost (Double Coston
+-- for a DARK Tribute Summon); otherwise sacrifices the weakest monsters.
+function aiPickTributes(summonCard,occupied,trib)
+ if trib>=2 then
+  for _,col in ipairs(occupied) do
+   if tributeValueOf(summonCard,G.mon[2][col])>=trib then return {col} end
+  end
+ end
+ local sorted={}
+ for _,c in ipairs(occupied) do table.insert(sorted,c) end
+ table.sort(sorted,function(a,b) return G.mon[2][a].atk<G.mon[2][b].atk end)
+ local tribs,val={},0
+ for _,col in ipairs(sorted) do
+  table.insert(tribs,col)
+  val=val+tributeValueOf(summonCard,G.mon[2][col])
+  if val>=trib then break end
+ end
+ return tribs
 end
 
 -- Returns the first card on player's monster row (truthy if any present)
@@ -297,13 +381,15 @@ function getMonAtk(card)
  local b=behaviorOf(card)
  if b and b.atkBonus then bonus=b.atkBonus(card) end
  local ab,_=getEquipBonus(card)
- return card.atk+bonus+ab
+ local nv=(isGravekeeper(card) and necrovalleyActive()) and 500 or 0
+ return card.atk+bonus+ab+nv
 end
 
--- Returns effective DEF, applying equip bonuses.
+-- Returns effective DEF, applying equip bonuses and the Necrovalley boost.
 function getMonDef(card)
  local _,db=getEquipBonus(card)
- return card.def+db
+ local nv=(isGravekeeper(card) and necrovalleyActive()) and 500 or 0
+ return card.def+db+nv
 end
 
 -- Destroys any face-up equip cards whose target is gone or face-down.
@@ -351,6 +437,36 @@ function animTribute(zones,onDone)
  end,onDone)
 end
 
+-- The Stern Mystic FLIP: briefly reveal every face-down card on the field by
+-- drawing each card's face (with a blinking border) on top of its zone.
+function animFlashFaceDown()
+ local list={}
+ for p=1,2 do
+  local zc=(p==1) and CZ or COZ
+  for c=1,3 do
+   local m=G.mon[p][c]
+   if m and m.facedown then
+    table.insert(list,{card=m,kind="mon",zc=zc,
+     x=(p==1) and COL[c] or COL[4-c], y=(p==1) and PY_M or OY_M})
+   end
+   local s=G.st[p][c]
+   if s and s.facedown then
+    table.insert(list,{card=s,kind="st",zc=zc,
+     x=(p==1) and COL[c] or COL[4-c], y=(p==1) and PY_S or OY_S})
+   end
+  end
+ end
+ if #list==0 then return end
+ addAnim(90,function(t,f)
+  for _,e in ipairs(list) do
+   if e.kind=="st" then dCardSpell(e.x,e.y,e.card,e.zc)
+   elseif e.card.pos==2 then dCardDef(e.x,e.y,e.card,e.zc)
+   else dCardAtk(e.x,e.y,e.card,e.zc) end
+   if (t//6)%2==0 then rectb(e.x,e.y,ZW_MAIN,ZH,CT) end
+  end
+ end)
+end
+
 -- ============================================================
 -- GAME STATE
 -- ============================================================
@@ -363,6 +479,7 @@ function newGame()
   dispLp={START_LP,START_LP},
   mon={{nil,nil,nil},{nil,nil,nil}},
   st ={{nil,nil,nil},{nil,nil,nil}},
+  fs ={nil,nil},  -- field spell per player (the FS zone)
   hand={{},{}},
   gy  ={{},{}},
   deck={{},{}},
@@ -388,6 +505,10 @@ end
 function getHoveredCard()
  local c=G.cur
  if c.row==3 then return G.hand[c.side][c.col+1] end
+ if c.row==1 then
+  if c.side==1 and c.col==0 then return G.fs[1] end
+  if c.side==2 and c.col==4 then return G.fs[2] end
+ end
  if c.col==0 or c.col==4 then return nil end
  if c.side==1 then
   return c.row==1 and G.mon[1][c.col] or G.st[1][c.col]
@@ -509,7 +630,7 @@ function handleDeckSelectInput()
  elseif btnp(1) then ds.sel=math.min(#ds.items,ds.sel+1)
  elseif btnp(4) then
   local item=ds.items[ds.sel]
-  if item then ds.onPick(item.deckIdx); G.mode="free"; G.deckSel=nil end
+  if item then ds.onPick(item.deckIdx,item); G.mode="free"; G.deckSel=nil end
  end
 end
 
@@ -528,7 +649,7 @@ function drawGameOver()
  print(msg,(SW-#msg*12)//2,by+8,col,true,2,false)
  -- final LP
  local lp1="YOU  "..G.lp[1].." LP"
- local lp2="OPP  "..G.lp[2].." LP"
+ local lp2=(G.oppName or "OPP").."  "..G.lp[2].." LP"
  print(lp1,(SW-#lp1*6)//2,by+34,win and CLP or CAT,true,1,false)
  print(lp2,(SW-#lp2*6)//2,by+44,win and CAT or CLP,true,1,false)
  -- blinking prompt (only after 90 frame delay)
@@ -685,8 +806,9 @@ function sendMonsterToGY(plr,col,reason)
   destroyFlash(zx,zy)
  end
  -- If this monster was summoned by a linked trap (Call of the Haunted etc.),
- -- destroy that trap too when it leaves the field for any reason.
- if m.linkedTrap then
+ -- destroy that trap too when it leaves the field for any reason. Skipped
+ -- while Jinzo is face-up: that trap's continuous effect is negated.
+ if m.linkedTrap and not jinzoActive() then
   for p=1,2 do for c=1,3 do
    if G.st[p][c]==m.linkedTrap then sendSpellTrapToGY(p,c,"rule") end
   end end
@@ -715,6 +837,16 @@ end
 function addToGY(plr,card,reason)
  if not card then return end
  table.insert(G.gy[plr],card)
+end
+
+-- Move a player's field spell from the FS zone to their GY (e.g. replaced by
+-- a new field spell, or destroyed).
+function sendFieldSpellToGY(plr,reason)
+ local f=G.fs[plr]
+ if not f then return nil end
+ G.fs[plr]=nil
+ table.insert(G.gy[plr],f)
+ return f
 end
 
 -- ============================================================
@@ -815,6 +947,9 @@ function spendChainLink(link)
   else
    sendSpellTrapToGY(loc.plr,loc.col,"effect")
   end
+ elseif loc.zone=="fs" then
+  -- Field spell stays face-up in the FS zone after resolving.
+  link.source.facedown=false
  elseif loc.zone=="hand" then
   for i,h in ipairs(G.hand[loc.plr]) do
    if h==link.source then discardFromHand(loc.plr,i,"effect"); break end
@@ -879,6 +1014,8 @@ function drawModeBanner()
   txt=G.discardSel.title or "DISCARD"
  elseif G.mode=="sel_st_target" and G.stTargetSel then
   txt=G.stTargetSel.title or "PICK S/T"
+ elseif G.mode=="sel_destroy" and G.destroySel and G.destroySel.title then
+  txt=G.destroySel.title
  end
  if not txt then return end
  local w=#txt*4+8
@@ -930,7 +1067,7 @@ end
 function findAIChainResponder(event,ctx)
  if not event then return nil end
  for i=1,3 do
-  if trapCanRespond(G.st[2][i],event,ctx) then
+  if trapCanRespond(G.st[2][i],event,ctx,2) then
    return i,G.st[2][i],behaviorOf(G.st[2][i])
   end
  end
@@ -1000,9 +1137,9 @@ function positionTrapSelectCursor()
  local col=(G.cur and G.cur.col) or 1
  if col<1 then col=1 elseif col>3 then col=3 end
  G.cur={side=1,row=2,col=col}
- if trapCanRespond(G.st[1][col],ts.event,ts.ctx) then return end
+ if trapCanRespond(G.st[1][col],ts.event,ts.ctx,1) then return end
  for i=1,3 do
-  if trapCanRespond(G.st[1][i],ts.event,ts.ctx) then G.cur.col=i; return end
+  if trapCanRespond(G.st[1][i],ts.event,ts.ctx,1) then G.cur.col=i; return end
  end
 end
 
@@ -1044,6 +1181,23 @@ function animSpellActivation(col,zy,card,plr)
    openChain({event="spell_activation",ctx={source=card,controller=plr}},"spell")
   end
   pushChainLink(makeSpellTrapLink(card,plr,"st",plr,col,nil))
+  advanceChain()
+ end)
+end
+
+-- Field-spell activation: the card already sits face-up in G.fs[plr]; flash
+-- the FS zone, then push the chain link (sourceLoc zone="fs").
+function animFieldSpellActivation(card,plr)
+ local zx=(plr==1) and COL[0] or COL[4]
+ local zy=(plr==1) and PY_M or OY_M
+ addAnim(60,function(t,f)
+  if (t//6)%2==0 then rect(zx,zy,ZW_SPEC,ZH,CSP); rectb(zx,zy,ZW_SPEC,ZH,CT) end
+ end,function()
+  card.facedown=false
+  if not G.chain then
+   openChain({event="spell_activation",ctx={source=card,controller=plr}},"spell")
+  end
+  pushChainLink(makeSpellTrapLink(card,plr,"fs",plr,nil,nil))
   advanceChain()
  end)
 end
@@ -1137,19 +1291,68 @@ BEHAVIORS={
  },
  mst={
   -- Quick-Play Spell (speed 2 derived from subtype=quickplay).
-  canActivate=function(card)
-   for p=1,2 do for c=1,3 do
-    if G.st[p][c] and G.st[p][c]~=card then return true end
-   end end
-   return false
-  end,
+  canActivate=function(card) return #mstTargets(card)>0 end,
   activate=function(opts) pickMSTTargetThenActivate(opts.col,opts.card,opts.trigCtx,opts.zone) end,
+ },
+ potofgreed={
+  aiCanCast=function() return #G.deck[2]>0 and #G.hand[2]<MAX_HAND end,
+  resolve=function(plr) drawCard(plr); drawCard(plr) end,
+ },
+ swords={
+  -- Continuous Spell: stays face-up, locks the opponent's attacks. The
+  -- swordsCounter (set on resolve) is decremented each of their End Phases
+  -- by tickSwords; the card self-destructs after the 3rd.
+  aiCanCast=function() return hasMonsters(1) end,
+  resolve=function(plr,ctx)
+   if ctx and ctx.source then ctx.source.swordsCounter=3 end
+  end,
+ },
+ thousandknives={
+  -- Needs Dark Magician on your field; destroys 1 opponent monster.
+  canActivate=function() return controlsDarkMagician(1) and hasMonsters(2) end,
+  aiCanCast =function() return controlsDarkMagician(2) and hasMonsters(1) end,
+  activate=function(opts) pickThousandKnivesTarget(opts.col,opts.card,opts.zone) end,
+  resolve=function(plr)  -- AI path: destroy opponent's strongest monster
+   local opp=3-plr
+   local best,bestI=-1,nil
+   for i=1,3 do
+    local m=G.mon[opp][i]
+    if m then
+     local s=(m.pos==1 and not m.facedown) and m.atk or m.def
+     if s>best then best=s; bestI=i end
+    end
+   end
+   if bestI then revealAndDestroyMon(opp,bestI,"effect"); flushTriggers() end
+  end,
+ },
+ monsterreborn={
+  -- Special Summon 1 monster from either GY to your field (ATK position).
+  canActivate=function() return firstEmpty(G.mon[1]) and anyGYMonster() and not necrovalleyActive() end,
+  aiCanCast =function() return firstEmpty(G.mon[2]) and anyGYMonster() and not necrovalleyActive() end,
+  activate=function(opts) pickMonsterRebornTarget(opts.col,opts.card,opts.zone) end,
+  resolve=function(plr)  -- AI path: revive the strongest monster available
+   if necrovalleyActive() then return end  -- effect negated by Necrovalley
+   local emptyCol=firstEmpty(G.mon[plr])
+   if not emptyCol then return end
+   local best,bp,bi=-1,nil,nil
+   for p=1,2 do for i,c in ipairs(G.gy[p]) do
+    if c.cat=="monster" and (c.atk or 0)>best then best=c.atk; bp=p; bi=i end
+   end end
+   if bi then
+    local m=table.remove(G.gy[bp],bi)
+    m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
+    m.linkedTrap=nil
+    G.mon[plr][emptyCol]=m
+    fireSummonHook(m,plr)
+   end
+  end,
  },
 
  -- =============== TRAPS ===============
  mirrorforce={
   responseOnly=true,
-  triggers={attack=function(t,ctx) return true end},
+  -- Only responds to an attack declared by the controller's OPPONENT.
+  triggers={attack=function(t,ctx,controller) return ctx and ctx.actor~=controller end},
   resolve=function(plr)
    -- Cancel the original attack continuation (legacy "consumed" mechanism).
    if G.trapSelect then G.trapSelect.consumed=true end
@@ -1164,7 +1367,11 @@ BEHAVIORS={
  },
  traphole={
   responseOnly=true,
-  triggers={summon=function(t,ctx) return not ctx.card.facedown and (ctx.card.atk or 0)>=1000 end},
+  -- Only responds to a summon by the controller's OPPONENT.
+  triggers={summon=function(t,ctx,controller)
+   return ctx and ctx.actor~=controller
+          and not ctx.card.facedown and (ctx.card.atk or 0)>=1000
+  end},
   resolve=function(plr,ctx)
    if not ctx then return end
    local opp=3-plr
@@ -1307,6 +1514,7 @@ BEHAVIORS={
      local m=makeCard(table.remove(G.deck[2],bestI))
      m.pos=1; m.facedown=false; m.attacked=false; m.summoned=true; m.posChanged=false
      G.mon[2][emptyCol]=m
+     fireSummonHook(m,2)
     end
    else
     G.mode="sel_deck"
@@ -1315,7 +1523,8 @@ BEHAVIORS={
       if firstEmpty(G.mon[1]) then
        local m=makeCard(table.remove(G.deck[1],deckIdx))
        G.pendingSS={card=m,plr=1}
-       G.menu={open=true,sel=1,items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}}}
+       -- forced: B can't cancel, else the pulled monster would be lost.
+       G.menu={open=true,sel=1,forced=true,items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}}}
       end
      end}
    end
@@ -1347,6 +1556,75 @@ BEHAVIORS={
    return b
   end,
  },
+ sternmystic={
+  -- FLIP: briefly reveal every face-down card on the field.
+  onFlip=function(card,plr) animFlashFaceDown() end,
+ },
+ doublecoston={
+  -- Counts as 2 Tributes for a DARK Tribute Summon. The tribute-value logic
+  -- lives in tributeValueOf(); no hook needed here.
+ },
+ jinzo={
+  -- While face-up, Trap Cards cannot be activated. Enforced by jinzoActive()
+  -- in trapCanRespond and buildMenu; no hook needed here.
+ },
+ gkcurse={
+  -- Each time summoned (Normal or Special), burn the opponent for 800.
+  onSummon=function(card,plr) changeLp(3-plr,-800) end,
+ },
+ gkassailant={
+  -- Attack-time battle-position change. Driven inline by confirmPlayerAttack /
+  -- the sel_atk confirm path (gated on necrovalleyActive); no hook needed here.
+ },
+ gkspy={
+  -- FLIP: Special Summon 1 "Gravekeeper's" monster from the Deck.
+  onFlip=function(card,plr)
+   if not firstEmpty(G.mon[plr]) then return end
+   local items={}
+   for i,id in ipairs(G.deck[plr]) do
+    local d=CARDS[id]
+    if (d.cat or "monster")=="monster" and isGravekeeper(d) then
+     table.insert(items,{deckIdx=i,name=d.name,atk=d.atk,def=d.def,lvl=d.lvl,desc=d.desc})
+    end
+   end
+   if #items==0 then return end
+   if plr==2 then
+    local bestAtk,bestI=-1,nil
+    for _,item in ipairs(items) do
+     if item.atk>bestAtk then bestAtk=item.atk; bestI=item.deckIdx end
+    end
+    if bestI then
+     local emptyCol=firstEmpty(G.mon[2])
+     local m=makeCard(table.remove(G.deck[2],bestI))
+     m.pos=1; m.facedown=false; m.attacked=false; m.summoned=true; m.posChanged=false
+     G.mon[2][emptyCol]=m
+     fireSummonHook(m,2)
+    end
+   else
+    G.mode="sel_deck"
+    G.deckSel={items=items,sel=1,title="GRAVEKEEPER'S SPY",
+     onPick=function(deckIdx)
+      if firstEmpty(G.mon[1]) then
+       local m=makeCard(table.remove(G.deck[1],deckIdx))
+       G.pendingSS={card=m,plr=1}
+       -- forced: B can't cancel, else the pulled monster would be lost.
+       G.menu={open=true,sel=1,forced=true,items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}}}
+      end
+     end}
+   end
+  end,
+ },
+ necrovalley={
+  -- Field Spell. Lives in the FS zone (G.fs). Two static effects, neither
+  -- needs a resolve action:
+  --  1. +500 ATK/DEF to all "Gravekeeper's" monsters -> applied in
+  --     getMonAtk/getMonDef via necrovalleyActive().
+  --  2. Negate effects that move a card out of a GY -> gates Monster Reborn
+  --     (canActivate/aiCanCast) and Call of Haunted (canReviveMonster), and
+  --     hides GY picks in legionSearch.
+  aiCanCast=function() return true end,
+  resolve=function() end,
+ },
 }
 
 -- ============================================================
@@ -1366,20 +1644,106 @@ end
 
 -- Helper: does `plr` have a monster in GY and a free zone to revive into?
 function canReviveMonster(plr)
+ if necrovalleyActive() then return false end  -- Necrovalley negates GY revival
  if not firstEmpty(G.mon[plr]) then return false end
  for _,c in ipairs(G.gy[plr]) do if c.cat=="monster" then return true end end
  return false
 end
 
+-- True if `plr` controls a monster named "Dark Magician" (Thousand Knives).
+function controlsDarkMagician(plr)
+ for c=1,3 do
+  local m=G.mon[plr][c]
+  if m and m.name=="Dark Magician" then return true end
+ end
+ return false
+end
+
+-- True if a face-up Jinzo is on the field (either side): Traps cannot be
+-- activated while this holds.
+function jinzoActive()
+ for p=1,2 do
+  for c=1,3 do
+   local m=G.mon[p][c]
+   if m and m.effect=="jinzo" and not m.facedown then return true end
+  end
+ end
+ return false
+end
+
+-- True if either graveyard holds a monster (Monster Reborn target check).
+function anyGYMonster()
+ for p=1,2 do
+  for _,c in ipairs(G.gy[p]) do if c.cat=="monster" then return true end end
+ end
+ return false
+end
+
+-- True if `plr`'s monsters cannot declare an attack: their opponent controls
+-- a face-up Swords of Revealing Light.
+function swordsBlocks(plr)
+ local opp=3-plr
+ for c=1,3 do
+  local s=G.st[opp][c]
+  if s and not s.facedown and s.effect=="swords" then return true end
+ end
+ return false
+end
+
+-- Decrement Swords of Revealing Light counters at an End Phase. Swords belongs
+-- to the opponent of the player whose turn is ending; destroyed after that
+-- opponent's 3rd End Phase. Call this before G.active flips.
+function tickSwords()
+ local controller=3-G.active
+ for c=1,3 do
+  local s=G.st[controller][c]
+  if s and not s.facedown and s.effect=="swords" and s.swordsCounter then
+   s.swordsCounter=s.swordsCounter-1
+   if s.swordsCounter<=0 then sendSpellTrapToGY(controller,c,"rule") end
+  end
+ end
+end
+
+-- True if `card` belongs to the "Gravekeeper's" archetype (name prefix match).
+function isGravekeeper(card)
+ return card and card.name and card.name:sub(1,13)=="Gravekeeper's"
+end
+
+-- True if a face-up "Necrovalley" occupies either player's field spell zone.
+function necrovalleyActive()
+ for p=1,2 do
+  local f=G.fs[p]
+  if f and not f.facedown and f.effect=="necrovalley" then return true end
+ end
+ return false
+end
+
+-- Fire a monster's onSummon hook. Call this at every Normal/Special Summon
+-- placement site, immediately after the monster lands face-up on the field.
+function fireSummonHook(card,plr)
+ local b=behaviorOf(card)
+ if b and b.onSummon then b.onSummon(card,plr) end
+end
+
 -- Returns true if face-down trap `t` on the field can chain to `event`/`ctx`.
-function trapCanRespond(t,event,ctx)
+-- `controller` = player who owns trap `t` (1 or 2). Trigger functions use it
+-- to verify the acting player (ctx.actor) is their opponent.
+function trapCanRespond(t,event,ctx,controller)
  if not (t and t.facedown and not t.setThisTurn) then return false end
+ if jinzoActive() then return false end  -- Jinzo: Traps cannot be activated
  local b=behaviorOf(t); if not b or not b.triggers then return false end
- local fn=b.triggers[event]
- if fn and fn(t,ctx) then return true end
- if G.chain and #G.chain.links>0 then
+ -- Event-trigger traps (Trap Hole, Mirror Force, Call of Haunted) respond
+ -- directly to the triggering action, so they may only be activated as the
+ -- FIRST link of the chain. Once a link exists they cannot be chained on
+ -- (prevents chaining Trap Hole to Trap Hole / two Mirror Forces, and a
+ -- trap responding to your own action via a later chain link).
+ if not G.chain or #G.chain.links==0 then
+  local fn=b.triggers[event]
+  if fn and fn(t,ctx,controller) then return true end
+ else
+  -- chain_open responders (Magic Jammer) fire only once a link exists.
   local co=b.triggers.chain_open
-  if co and co(t,ctx) then return true end
+  if co and co(t,ctx,controller) then return true end
  end
  return false
 end
@@ -1396,6 +1760,7 @@ function aiResolveCallHaunted(stCol,trap)
   m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
   G.mon[2][emptyCol]=m
   trap.linkedMon=m; m.linkedTrap=trap
+  fireSummonHook(m,2)
  end
 end
 
@@ -1437,17 +1802,19 @@ function buildMenu()
       canActivate = true
      end
      if canActivate then table.insert(items,{"ACTIVATE","cast_hand"}) end
-     if emptyZone then table.insert(items,{"SET","set_st"}) end
+     -- Field spells go straight to the FS zone; no face-down Set option.
+     if emptyZone and card.subtype~="field" then table.insert(items,{"SET","set_st"}) end
     elseif card.cat=="trap" then
      if firstEmpty(G.st[1]) then table.insert(items,{"SET","set_st"}) end
     elseif not G.normalSummoned then
-     local monCount,emptyZone=0,false
+     local emptyZone=false
      for i=1,3 do
-      if G.mon[1][i] then monCount=monCount+1 else emptyZone=true end
+      if not G.mon[1][i] then emptyZone=true end
      end
      local tribNeeded=tribsNeeded(card.lvl or 1)
+     -- fieldTributeValue counts Double Coston as 2 for DARK summons.
      local canSummon=(tribNeeded==0 and emptyZone)
-                  or (tribNeeded>=1 and monCount>=tribNeeded)
+                  or (tribNeeded>=1 and fieldTributeValue(card,1)>=tribNeeded)
      if canSummon then table.insert(items,{"SUMMON","summon"}) end
      if canSummon then table.insert(items,{"SET","set"}) end
     end
@@ -1473,14 +1840,17 @@ function buildMenu()
     if isMain and not card.facedown and card.effect=="legion" and not G.legionSummonUsed and not G.extraSpellcasterSummon then
      table.insert(items,{"EXTRA SUMMON","legion_extra"})
     end
-    if G.ph==PH_BATTLE and card.pos==1 and not card.facedown and not card.attacked then
+    if G.ph==PH_BATTLE and card.pos==1 and not card.facedown and not card.attacked
+       and not swordsBlocks(1) then
      table.insert(items,{"ATTACK","attack"})
     end
    end
 
   elseif c.row==2 and c.col>=1 and c.col<=3 then  -- spell/trap zone
    local card=G.st[1][c.col]
-   if card and not card.setThisTurn then
+   -- Only face-down cards may be activated; a face-up card here is an
+   -- already-active continuous/equip card and must not be re-activated.
+   if card and card.facedown and not card.setThisTurn then
     local b=behaviorOf(card)
     if card.cat=="spell" and isMain then
      local canActivate
@@ -1492,7 +1862,7 @@ function buildMenu()
       canActivate = true
      end
      if canActivate then table.insert(items,{"ACTIVATE","activate"}) end
-    elseif card.cat=="trap" and not (b and b.responseOnly) then
+    elseif card.cat=="trap" and not (b and b.responseOnly) and not jinzoActive() then
      if not (b and b.canActivate) or b.canActivate(card) then
       table.insert(items,{"ACTIVATE","activate"})
      end
@@ -1571,6 +1941,17 @@ function execAction(key)
     G.mode="sel_equip"
     local startCol=firstOccupied(G.mon[1]) or firstOccupied(G.mon[2]) or 1
     G.cur={side=1,row=1,col=startCol}
+   elseif card.subtype=="field" then
+    -- Field spell: goes straight to the FS zone, replacing any field spell
+    -- already there. No zone pick needed (one field zone per player).
+    local fcard=copyCard(card)
+    fcard.facedown=false
+    if G.fs[1] then sendFieldSpellToGY(1,"rule") end
+    G.fs[1]=fcard
+    table.remove(G.hand[1],handIdx)
+    G.mode="free"
+    G.cur={side=1,row=1,col=0}
+    animFieldSpellActivation(fcard,1)
    else
     G.pending={handIdx=handIdx,card=card,action="cast_hand"}
     G.mode="sel_st"
@@ -1615,8 +1996,49 @@ function execAction(key)
     m.pos=(key=="ss_atk") and 1 or 2
     m.facedown=false; m.attacked=false; m.summoned=true; m.posChanged=false
     G.mon[ps.plr][col]=m
+    fireSummonHook(m,ps.plr)
    end
   end
+
+ elseif key=="reborn_atk" or key=="reborn_def" then
+  -- Monster Reborn: position chosen, now activate. The chain link's resolveFn
+  -- special-summons the captured GY monster at the picked position.
+  local rs=G.rebornSel; G.rebornSel=nil
+  if rs then
+   local pos=(key=="reborn_atk") and 1 or 2
+   pushActivationLink({card=rs.card,col=rs.col,zone=rs.zone,plr=1},function()
+    local emptyCol=firstEmpty(G.mon[1])
+    local m=emptyCol and G.gy[rs.gyPlr][rs.gyIdx]
+    if not (emptyCol and m and m.cat=="monster") then return end
+    table.remove(G.gy[rs.gyPlr],rs.gyIdx)
+    m.pos=pos; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
+    m.linkedTrap=nil
+    G.mon[1][emptyCol]=m
+    fireSummonHook(m,1)
+   end)
+  end
+
+ elseif key=="assail_yes" then
+  -- Gravekeeper's Assailant: pick 1 opponent monster, change its battle
+  -- position, then continue the declared attack.
+  G.mode="sel_destroy"
+  G.destroySel={side=2,title="ASSAILANT: CHANGE POS",onPick=function(side,ti)
+   local m=G.mon[side][ti]
+   if m then
+    if m.facedown then
+     m.facedown=false; m.pos=1; fireMonHook(m,"onFlip",2)
+    else
+     m.pos=(m.pos==1) and 2 or 1
+    end
+    m.posChanged=true
+    checkEquips()
+   end
+   confirmPlayerAttack()
+  end}
+  G.cur={side=2,row=1,col=4-(firstOccupied(G.mon[2]) or 1)}
+
+ elseif key=="assail_no" then
+  confirmPlayerAttack()
  end
 end
 
@@ -1673,6 +2095,34 @@ function resolveAttack(attacker,atkCol,target,tgtIdx)
   end,doSlash)
  else
   doSlash()
+ end
+end
+
+-- Resolve a player-declared attack: run the AI's trap window, then carry out
+-- the attack on the target stored in G.pending (set when the attack was
+-- confirmed). Used both for normal attacks and after Assailant's effect.
+function confirmPlayerAttack()
+ local p=G.pending
+ if not p then return end
+ local tgtIdx=p.tgtIdx
+ local function proceedAttack()
+  -- Re-check attacker (chain may have destroyed it, e.g. Mirror Force)
+  if not p.attacker or G.mon[1][p.atkCol]~=p.attacker then
+   G.mode="free"; G.pending=nil; return
+  end
+  if not hasMonsters(2) then
+   resolveAttack(p.attacker,p.atkCol,nil,nil)
+  else
+   local target=G.mon[2][tgtIdx]
+   if target then
+    resolveAttack(p.attacker,p.atkCol,target,tgtIdx)
+   end
+   -- If target is nil (cursor on empty zone), do nothing; player stays in
+   -- sel_atk and can re-navigate. Matches pre-chain behavior.
+  end
+ end
+ if not checkAITraps("attack",{att=p.attacker,atkCol=p.atkCol},proceedAttack) then
+  proceedAttack()
  end
 end
 
@@ -1785,6 +2235,23 @@ function dFieldSlot(x,y,card,facedown,zoneColor)
  end
 end
 
+-- Field-spell zone (ZW_SPEC wide): empty shows the "FS" label, occupied shows
+-- the field spell card.
+function dFieldSpellSlot(x,y,card)
+ if not card then
+  dZone(x,y,ZW_SPEC,ZH,CFS,"FS")
+ elseif card.facedown then
+  rect(x,y,ZW_SPEC,ZH,CFS)
+  dCardBack(x,y+1,ZW_SPEC,ZH-2,0)
+  rectb(x,y,ZW_SPEC,ZH,CD)
+ else
+  rect(x,y,ZW_SPEC,ZH,CFS)
+  rect(x+2,y+1,ZW_SPEC-4,ZH-2,CSP)
+  if card.spr then spr(card.spr,x+2,y+2,card.bg,1,0,0,2,2) end
+  rectb(x,y,ZW_SPEC,ZH,CD)
+ end
+end
+
 -- Cursor highlight (dotted red border outside)
 function dCursor(x,y,w,h,col)
  dDotBorder(x-1,y-1,w+2,h+2,col)
@@ -1816,6 +2283,9 @@ function drawOppSide()
  for c=1,3 do
   local card=G.st[2][4-c]
   dFieldSlot(COL[c],OY_S,card,not card or card.facedown,COZ)
+  if card and card.swordsCounter and not card.facedown then
+   print(tostring(card.swordsCounter),COL[c]+ZW_MAIN-7,OY_S+2,CCR,true,1,false)
+  end
  end
  dZone(COL[4],OY_S,ZW_SPEC,ZH,CED,"ED")
 
@@ -1823,13 +2293,13 @@ function drawOppSide()
  for c=1,3 do
   local card=G.mon[2][4-c]
   dFieldSlot(COL[c],OY_M,card,card and card.facedown,COZ)
-  if (G.mode=="sel_atk" or G.mode=="sel_destroy") and card then dDotBorder(COL[c],OY_M,ZW_MAIN,ZH) end
+  if (G.mode=="sel_atk" or (G.mode=="sel_destroy" and (not G.destroySel.side or G.destroySel.side==2))) and card then dDotBorder(COL[c],OY_M,ZW_MAIN,ZH) end
   if G.mode=="sel_equip" and card and not card.facedown then dDotBorder(COL[c],OY_M,ZW_MAIN,ZH,CSP) end
   if G.battleAnim and G.battleAnim.atkCol and (4-c)==G.battleAnim.atkCol then
    dDotBorder(COL[c],OY_M,ZW_MAIN,ZH,CAT)
   end
  end
- dZone(COL[4],OY_M,ZW_SPEC,ZH,CFS,"FS")
+ dFieldSpellSlot(COL[4],OY_M,G.fs[2])
 end
 
 -- Player (divider → bottom):
@@ -1837,7 +2307,7 @@ end
 --   PY_S: [ED][S1][S2][S3][DK]
 --   PY_H: face-up hand cards (centered)
 function drawPlrSide()
- dZone(COL[0],PY_M,ZW_SPEC,ZH,CFS,"FS")
+ dFieldSpellSlot(COL[0],PY_M,G.fs[1])
  for c=1,3 do
   local zc
   local isTrib=false
@@ -1853,7 +2323,7 @@ function drawPlrSide()
    dDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
   elseif G.mode=="sel_mon" and not G.mon[1][c] then
    dDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
-  elseif G.mode=="sel_destroy" and G.mon[1][c] then
+  elseif G.mode=="sel_destroy" and G.mon[1][c] and (not G.destroySel.side or G.destroySel.side==1) then
    dDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
   elseif G.mode=="sel_atk" and G.pending and c==G.pending.atkCol then
    dDotBorder(COL[c],PY_M,ZW_MAIN,ZH,CCR)
@@ -1870,8 +2340,11 @@ function drawPlrSide()
  for c=1,3 do
   local card=G.st[1][c]
   dFieldSlot(COL[c],PY_S,card,card and card.facedown,CZ)
+  if card and card.swordsCounter and not card.facedown then
+   print(tostring(card.swordsCounter),COL[c]+ZW_MAIN-7,PY_S+2,CCR,true,1,false)
+  end
   if G.mode=="sel_st" and not card then dDotBorder(COL[c],PY_S,ZW_MAIN,ZH) end
-  if G.mode=="opp_trap_select" and G.trapSelect and trapCanRespond(card,G.trapSelect.event,G.trapSelect.ctx) then
+  if G.mode=="opp_trap_select" and G.trapSelect and trapCanRespond(card,G.trapSelect.event,G.trapSelect.ctx,1) then
    dDotBorder(COL[c],PY_S,ZW_MAIN,ZH)
   end
  end
@@ -2011,7 +2484,7 @@ function drawPanel()
   print("B: cancel",2,86,CD,true,1,true)
  elseif G.mode=="sel_tribute" then
   local p=G.pending
-  print("TRIBUTE "..(p and #p.tributes or 0).."/".. (p and p.tribNeeded or 0),2,71,CFS,true,1,true)
+  print("TRIBUTE "..(p and tributeTotal(p) or 0).."/".. (p and p.tribNeeded or 0),2,71,CFS,true,1,true)
   print("A: pick",2,79,CD,true,1,true)
   print("B: cancel",2,86,CD,true,1,true)
  elseif G.mode=="sel_mon" then
@@ -2090,7 +2563,10 @@ function legionSearch(onDone)
   end
  end
  for i,id in ipairs(G.deck[1]) do addItem("deck",CARDS[id],i) end
- for i,card in ipairs(G.gy[1])  do addItem("gy",card,i) end
+ -- Necrovalley negates moving a card out of the GY: skip GY candidates.
+ if not necrovalleyActive() then
+  for i,card in ipairs(G.gy[1]) do addItem("gy",card,i) end
+ end
  if #items==0 then if onDone then onDone() end; return end
  G.mode="sel_deck"
  G.deckSel={
@@ -2180,30 +2656,26 @@ function handleInput()
   return
  end
 
- -- S/T target picker (e.g. MST): cursor on any S/T zone (both sides).
- -- UP toward opponent, DOWN toward player (matches sel_destroy / main field).
- -- Visual col c.col maps to data index `dataIdx`: c.col on player, 4-c.col on opp.
+ -- S/T target picker (e.g. MST): cycles through every S/T card and field
+ -- spell on the board. Any arrow key steps the selection; cursor snaps to it.
  if G.mode=="sel_st_target" and G.stTargetSel then
-  if c.row~=2 then c.row=2 end
-  local function dataIdx(side,vcol) return (side==2) and (4-vcol) or vcol end
-  if btnp(2) then
-   for vcol=c.col-1,1,-1 do if G.st[c.side][dataIdx(c.side,vcol)] then c.col=vcol; break end end
-  elseif btnp(3) then
-   for vcol=c.col+1,3 do if G.st[c.side][dataIdx(c.side,vcol)] then c.col=vcol; break end end
-  elseif btnp(0) then
-   if c.side==1 then c.side=2; for vcol=1,3 do if G.st[2][dataIdx(2,vcol)] then c.col=vcol; break end end end
-  elseif btnp(1) then
-   if c.side==2 then c.side=1; for vcol=1,3 do if G.st[1][vcol] then c.col=vcol; break end end end
+  local sts=G.stTargetSel
+  local tgts=mstTargets(sts.source)
+  if #tgts==0 then G.stTargetSel=nil; G.mode="free"; return end
+  local idx=sts.idx or 1
+  if idx>#tgts then idx=1 end
+  if btnp(2) or btnp(0) then idx=((idx-2)%#tgts)+1
+  elseif btnp(3) or btnp(1) then idx=(idx%#tgts)+1
   elseif btnp(4) then
-   local p=c.side
-   local di=dataIdx(p,c.col)
-   local card=G.st[p][di]
-   if card and card~=G.stTargetSel.source then
-    local cb=G.stTargetSel.onPick
-    G.stTargetSel=nil; G.mode="free"
-    cb(p,di)
-   end
+   local t=tgts[idx]
+   local cb=sts.onPick
+   G.stTargetSel=nil; G.mode="free"
+   cb(t.side,t.kind,t.di)
+   return
   end
+  sts.idx=idx
+  local t=tgts[idx]
+  G.cur={side=t.side,row=t.row,col=t.vcol}
   return
  end
 
@@ -2216,25 +2688,18 @@ function handleInput()
    c.col=math.min(3,c.col+1)
   elseif btnp(4) then  -- A: confirm attack
    local p=G.pending
-   local tgtIdx=4-c.col
-   local function proceedAttack()
-    -- Re-check attacker (chain may have destroyed it, e.g. Mirror Force)
-    if not p.attacker or G.mon[1][p.atkCol]~=p.attacker then
-     G.mode="free"; G.pending=nil; return
-    end
-    if not hasMonsters(2) then
-     resolveAttack(p.attacker,p.atkCol,nil,nil)
-    else
-     local target=G.mon[2][tgtIdx]
-     if target then
-      resolveAttack(p.attacker,p.atkCol,target,tgtIdx)
-     end
-     -- If target is nil (cursor on empty zone), do nothing; player stays in
-     -- sel_atk and can re-navigate. Matches pre-chain behavior.
-    end
-   end
-   if not checkAITraps("attack",{att=p.attacker,atkCol=p.atkCol},proceedAttack) then
-    proceedAttack()
+   p.tgtIdx=4-c.col
+   -- Gravekeeper's Assailant: while Necrovalley is on the field, offer its
+   -- battle-position-change effect before the attack resolves.
+   if p.attacker and p.attacker.effect=="gkassailant"
+      and necrovalleyActive() and hasMonsters(2) then
+    G.mode="free"
+    G.menu={open=true,sel=1,forced=true,items={
+     {"EFFECT","assail_yes"},
+     {"NORMALL","assail_no"},
+    }}
+   else
+    confirmPlayerAttack()
    end
   elseif btnp(5) then  -- B: cancel
    local col=G.pending and G.pending.atkCol or 2
@@ -2258,10 +2723,10 @@ function handleInput()
     for i,t in ipairs(p.tributes) do
      if t==col then table.remove(p.tributes,i); found=true; break end
     end
-    if not found and #p.tributes<p.tribNeeded then
+    if not found and tributeTotal(p)<p.tribNeeded then
      table.insert(p.tributes,col)
     end
-    if #p.tributes==p.tribNeeded then
+    if tributeTotal(p)>=p.tribNeeded then
      local tribs={}
      for _,v in ipairs(p.tributes) do table.insert(tribs,v) end
      local zones={}
@@ -2315,6 +2780,7 @@ function handleInput()
     if G.legionSearchPending then
      G.legionSearchPending=false; legionSearch()
     end
+    if not card.facedown then fireSummonHook(card,1) end
     checkAITraps("summon",{card=card,monIdx=col})
    end
   elseif btnp(5) then  -- B: cancel, return cursor to the hand card
@@ -2399,17 +2865,17 @@ function handleInput()
   return
  end
 
- -- Man-EaterBug FLIP: pick any monster to destroy
+ -- Monster destroy picker (Man-Eater Bug = any; Thousand Knives = side 2 only)
  if G.mode=="sel_destroy" then
+  local ds=G.destroySel
   if btnp(2) then c.col=math.max(1,c.col-1)
   elseif btnp(3) then c.col=math.min(3,c.col+1)
-  elseif btnp(0) then if c.side==1 then c.side=2 end
-  elseif btnp(1) then if c.side==2 then c.side=1 end
+  elseif btnp(0) then if c.side==1 and ds.side~=1 then c.side=2 end
+  elseif btnp(1) then if c.side==2 and ds.side~=2 then c.side=1 end
   elseif btnp(4) then
    local ti=(c.side==2) and (4-c.col) or c.col
    local grid=(c.side==1) and G.mon[1] or G.mon[2]
-   if ti>=1 and ti<=3 and grid[ti] then
-    local ds=G.destroySel
+   if ti>=1 and ti<=3 and grid[ti] and (not ds.side or ds.side==c.side) then
     G.mode="free"; G.destroySel=nil
     ds.onPick(c.side,ti)
    end
@@ -2425,7 +2891,7 @@ function handleInput()
    G.menu.sel=math.min(#G.menu.items,G.menu.sel+1)
   elseif btnp(4) then  -- A: confirm
    execAction(G.menu.items[G.menu.sel][2])
-  elseif btnp(5) then  -- B: cancel
+  elseif btnp(5) and not G.menu.forced then  -- B: cancel (forced menus can't)
    G.menu.open=false
   end
   return
@@ -2505,6 +2971,7 @@ function autoPhase()
  if G.autoTimer<=0 then
   G.autoTimer=50
   if G.ph==PH_END then
+   tickSwords()
    G.turn=G.turn+1; G.active=2; changePhase(PH_DRAW)
    G.normalSummoned=false; drawCard(2)
    resetTurnFlags(); G.aiTimer=AI_DELAY
@@ -2549,6 +3016,7 @@ end
 -- with the original action; the continuation will), false if AI had no
 -- response and the caller should proceed inline.
 function checkAITraps(event,ctx,onResolved)
+ if ctx then ctx.actor=1 end  -- player performed the action
  if not aiHasChainableResponse(event,ctx) then return false end
  openChain({event=event,ctx=ctx,onResolved=onResolved},"event")
  G.chain.offering=2  -- AI gets first chance to respond
@@ -2577,7 +3045,7 @@ end
 
 -- True if the player has a face-down trap that can chain to (event,ctx).
 function hasActivatableTrap(event,ctx)
- for i=1,3 do if trapCanRespond(G.st[1][i],event,ctx) then return true end end
+ for i=1,3 do if trapCanRespond(G.st[1][i],event,ctx,1) then return true end end
  return false
 end
 
@@ -2605,6 +3073,7 @@ function finishTrapSelect()
 end
 
 function checkTraps(event,ctx)
+ if ctx then ctx.actor=2 end  -- AI performed the action
  if not hasActivatableTrap(event,ctx) then return false end
  -- Open a chain window with the caller's continuation; chain.trigger.onResolved
  -- runs after both players pass (and the chain has fully resolved LIFO).
@@ -2682,6 +3151,7 @@ function pickCallHauntedTargetThenActivate(col,card,ctx)
     m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
     G.mon[1][emptyCol]=m
     card.linkedMon=m; m.linkedTrap=card
+    fireSummonHook(m,1)
    end)
   end}
 end
@@ -2702,7 +3172,8 @@ function pickJammerCostThenActivate(col,card,ctx)
       local target=links[i-1]
       target.negated=true
       local loc=target.sourceLoc
-      if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col) end
+      if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col)
+      elseif loc and loc.zone=="fs" then sendFieldSpellToGY(loc.plr,"effect") end
       return
      end
     end
@@ -2711,32 +3182,91 @@ function pickJammerCostThenActivate(col,card,ctx)
  G.cur={side=1,row=3,col=0}  -- cursor onto hand
 end
 
--- MST: pick a face-up OR face-down S/T target, then push the chain link.
+-- Ordered list of valid MST targets: every S/T card plus either player's field
+-- spell, excluding the MST card itself. Each entry carries the screen cursor
+-- position (side,row,vcol) and the data locator (kind "st"/"fs", di).
+function mstTargets(source)
+ local list={}
+ for vc=1,3 do
+  if G.st[1][vc] and G.st[1][vc]~=source then
+   table.insert(list,{side=1,row=2,vcol=vc,kind="st",di=vc})
+  end
+ end
+ if G.fs[1] and G.fs[1]~=source then
+  table.insert(list,{side=1,row=1,vcol=0,kind="fs",di=1})
+ end
+ for vc=1,3 do
+  local di=4-vc
+  if G.st[2][di] and G.st[2][di]~=source then
+   table.insert(list,{side=2,row=2,vcol=vc,kind="st",di=di})
+  end
+ end
+ if G.fs[2] and G.fs[2]~=source then
+  table.insert(list,{side=2,row=1,vcol=4,kind="fs",di=2})
+ end
+ return list
+end
+
+-- MST: pick a face-up/face-down S/T card or a field spell, then push the link.
 -- zone="st" if activating from field, "hand" if from hand (quick-play).
 function pickMSTTargetThenActivate(col,card,ctx,zone)
- local hasAny=false
- for p=1,2 do for c=1,3 do if G.st[p][c] and G.st[p][c]~=card then hasAny=true end end end
- if not hasAny then
+ local tgts=mstTargets(card)
+ if #tgts==0 then
   if zone=="hand" then G.mode="free" else abortToTrapSelect() end
   return
  end
  G.mode="sel_st_target"
  G.stTargetSel={title=(zone=="hand") and "MST" or "MST (CHAINED)",
-  source=card,zone=zone,col=col,
-  onPick=function(targetPlr,targetCol)
+  source=card,zone=zone,col=col,idx=1,
+  onPick=function(targetPlr,kind,targetDi)
    pushActivationLink({card=card,col=col,zone=zone,plr=1,
-                        targets={plr=targetPlr,col=targetCol}},function()
-    if G.st[targetPlr][targetCol] then revealAndDestroyST(targetPlr,targetCol) end
+                        targets={plr=targetPlr,kind=kind,col=targetDi}},function()
+    if kind=="fs" then
+     if G.fs[targetPlr] then sendFieldSpellToGY(targetPlr,"effect") end
+    elseif G.st[targetPlr][targetDi] then
+     revealAndDestroyST(targetPlr,targetDi)
+    end
    end)
   end}
- -- Position cursor on first valid target (opp side uses mirrored visual cols)
- for p=1,2 do for c=1,3 do
-  if G.st[p][c] and G.st[p][c]~=card then
-   local vcol=(p==2) and (4-c) or c
-   G.cur={side=p,row=2,col=vcol}; goto stcursor_done
+ local t=tgts[1]
+ G.cur={side=t.side,row=t.row,col=t.vcol}
+end
+
+-- Thousand Knives: pick 1 opponent monster, then push the chain link with the
+-- pre-captured target (picking at activation keeps chain resolution synchronous).
+function pickThousandKnivesTarget(col,card,zone)
+ if not hasMonsters(2) then G.mode="free"; return end
+ G.mode="sel_destroy"
+ G.destroySel={side=2,onPick=function(tp,ti)
+  pushActivationLink({card=card,col=col,zone=zone,plr=1},function()
+   if G.mon[tp][ti] then revealAndDestroyMon(tp,ti,"effect"); flushTriggers() end
+  end)
+ end}
+ G.cur={side=2,row=1,col=4-(firstOccupied(G.mon[2]) or 1)}
+end
+
+-- Monster Reborn: pick 1 monster from either GY, then push the chain link.
+function pickMonsterRebornTarget(col,card,zone)
+ local items={}
+ for p=1,2 do
+  for i,c in ipairs(G.gy[p]) do
+   if c.cat=="monster" then
+    table.insert(items,{gyPlr=p,gyIdx=i,name=c.name,atk=c.atk,def=c.def,lvl=c.lvl,desc=c.desc})
+   end
   end
- end end
- ::stcursor_done::
+ end
+ if #items==0 then G.mode="free"; return end
+ G.mode="sel_deck"
+ G.deckSel={items=items,sel=1,title="MONSTER REBORN",
+  onPick=function(_,item)
+   -- Monster picked; now choose a battle position. The forced menu cannot be
+   -- B-cancelled (the card is already committed to the S/T zone).
+   G.rebornSel={col=col,card=card,zone=zone,gyPlr=item.gyPlr,gyIdx=item.gyIdx}
+   G.menu={open=true,sel=1,forced=true,items={
+    {"ATK POSITION","reborn_atk"},
+    {"DEF POSITION","reborn_def"},
+   }}
+  end}
 end
 
 -- Variant of animSpellActivation that uses a custom resolveFn (for targeting
@@ -2809,23 +3339,30 @@ function aiDoMain()
    local doIt=b and b.aiCanCast and b.aiCanCast(card)
    if doIt then
     table.remove(G.hand[2],i)
-    local stIdx=nil
-    for j=1,3 do if not G.st[2][j] then stIdx=j; break end end
-    if stIdx then
-     G.st[2][stIdx]=card
-     animSpellActivation(stIdx,OY_S,card,2)
+    if card.subtype=="field" then
+     -- Field spell: straight to the FS zone, replacing any existing one.
+     if G.fs[2] then sendFieldSpellToGY(2,"rule") end
+     G.fs[2]=card
+     animFieldSpellActivation(card,2)
     else
-     -- No S/T zone free: card resolves directly from hand to GY.
-     addToGY(2,card,"effect")
-     if not G.chain then openChain(nil,"spell") end
-     pushChainLink({
-      source=card, controller=2, speed=chainSpeed(card),
-      sourceLoc=nil, targets=nil,
-      resolveFn=function(self)
-       applyResolve(self.source,self.controller,nil)
-      end,
-     })
-     advanceChain()
+     local stIdx=nil
+     for j=1,3 do if not G.st[2][j] then stIdx=j; break end end
+     if stIdx then
+      G.st[2][stIdx]=card
+      animSpellActivation(stIdx,OY_S,card,2)
+     else
+      -- No S/T zone free: card resolves directly from hand to GY.
+      addToGY(2,card,"effect")
+      if not G.chain then openChain(nil,"spell") end
+      pushChainLink({
+       source=card, controller=2, speed=chainSpeed(card),
+       sourceLoc=nil, targets=nil,
+       resolveFn=function(self)
+        applyResolve(self.source,self.controller,nil)
+       end,
+      })
+      advanceChain()
+     end
     end
     return true
    end
@@ -2857,7 +3394,7 @@ function aiDoMain()
    local trib=tribsNeeded(card.lvl or 1)
    local ok=(trib==0 and #empty>0)
          or (trib==1 and #occupied>=1)
-         or (trib==2 and #occupied>=2)
+         or (trib==2 and fieldTributeValue(card,2)>=2)
    if ok and card.atk>bestAtk then bestAtk=card.atk; bestIdx=i end
   end
  end
@@ -2867,9 +3404,7 @@ function aiDoMain()
  -- Set face-down DEF when defense stat exceeds attack stat
  local useDefPos=(card.def or 0)>card.atk
  if trib>0 then
-  table.sort(occupied,function(a,b) return G.mon[2][a].atk<G.mon[2][b].atk end)
-  local tribs={}
-  for i=1,trib do table.insert(tribs,occupied[i]) end
+  local tribs=aiPickTributes(card,occupied,trib)
   table.remove(G.hand[2],bestIdx); G.normalSummoned=true
   local zones={}
   for _,tcol in ipairs(tribs) do
@@ -2883,6 +3418,7 @@ function aiDoMain()
    card.summoned=true
    if useDefPos then card.pos=2; card.facedown=true end
    G.mon[2][empI]=card
+   if not card.facedown then fireSummonHook(card,2) end
    checkTraps("summon",{card=card,monIdx=empI})
   end)
   return true
@@ -2891,6 +3427,7 @@ function aiDoMain()
  card.summoned=true
  if useDefPos then card.pos=2; card.facedown=true end
  G.mon[2][empty[1]]=card; G.normalSummoned=true
+ if not card.facedown then fireSummonHook(card,2) end
  checkTraps("summon",{card=card,monIdx=empty[1]})
  return true
 end
@@ -2952,8 +3489,15 @@ local function aiBestTarget(att)
   local t=G.mon[1][j]
   if t then
    local s,ok
-   if t.pos==2 then s=getMonDef(t); ok=(attAtk>s)
-   else          s=getMonAtk(t);   ok=(attAtk>=s) end
+   if t.facedown then
+    -- Face-down monster: the AI can't see its stats, so it attacks
+    -- speculatively. Scored above known kills so clean kills go first.
+    s=3000; ok=true
+   elseif t.pos==2 then
+    s=getMonDef(t); ok=(attAtk>s)
+   else
+    s=getMonAtk(t);   ok=(attAtk>=s)
+   end
    if ok and s<bestScore then bestScore=s; bestCol=j end
   end
  end
@@ -2961,12 +3505,18 @@ local function aiBestTarget(att)
 end
 
 function aiDoNextAttack()
+ if swordsBlocks(2) then return false end
  for i=G.aiBattleIdx,3 do
   local att=G.mon[2][i]
   if att and att.pos==1 and not att.facedown and not att.attacked then
-   G.aiBattleIdx=i+1
    local hasPlr=hasMonsters(1)
    local tgtCol=hasPlr and aiBestTarget(att) or nil
+   if hasPlr and not tgtCol then
+    -- Player has monsters but none are a worthwhile target (e.g. a face-up
+    -- DEF wall the AI can't break). Skip this attacker without declaring.
+    att.attacked=true
+   else
+   G.aiBattleIdx=i+1
    -- show declaration indicator for 30 frames, then open trap window
    G.battleAnim={atkCol=i,tgtCol=tgtCol}
    addAnim(30,function()end,function()
@@ -2989,6 +3539,7 @@ function aiDoNextAttack()
     if not checkTraps("attack",{att=att,atkCol=i,hasTarget=tgtCol~=nil,proceed=doSword}) then doSword() end
    end)
    return true
+   end
   end
  end
  return false
@@ -3016,6 +3567,7 @@ function aiTick()
    if not checkTraps("phase",{proceed=go}) then go() end
   end
  elseif G.ph==PH_END then
+  tickSwords()
   G.turn=G.turn+1; G.active=1; changePhase(PH_DRAW)
   G.normalSummoned=false; drawCard(1); G.autoTimer=50
   resetTurnFlags()
@@ -3091,13 +3643,64 @@ function handleMenuInput()
  if btnp(0) or btnp(2) then TITLE_SEL=math.max(1,TITLE_SEL-1)
  elseif btnp(1) or btnp(3) then TITLE_SEL=math.min(#TITLE_ITEMS,TITLE_SEL+1)
  elseif btnp(4) then
-  if     TITLE_SEL==1 then startGame()
+  if     TITLE_SEL==1 then SCENE="oppselect"
   elseif TITLE_SEL==2 then startDeckBuild()
   end
   -- OPTIONS: placeholder
  elseif btnp(5) then
   SCENE="title"
  end
+end
+
+-- ============================================================
+-- OPPONENT SELECT
+-- ============================================================
+function drawOppSelect()
+ -- Background: navy playmat + dither + gold border (matches menu)
+ cls(CMAT)
+ for y=0,SH-1,4 do for x=0,SW-1,4 do pix(x,y,CB) end end
+ rectb(0,0,SW,SH,9)
+
+ local t="CHOOSE YOUR OPPONENT"
+ print(t,(SW-#t*6)//2+1,13,CB,true,1,false)
+ print(t,(SW-#t*6)//2,  12,CCR,true,1,false)
+
+ -- Framed 32x32 portraits in a centered row.
+ local ps,pad=32,4          -- portrait size, inner padding
+ local bw=ps+pad*2          -- box size (40)
+ local gap=12
+ local totalW=#OPPONENTS*bw+(#OPPONENTS-1)*gap
+ local x0=(SW-totalW)//2
+ local cy=46
+
+ for i,opp in ipairs(OPPONENTS) do
+  local x=x0+(i-1)*(bw+gap)
+  local sel=(i==OPP_SEL)
+  -- Picture frame: colored outer border + black mat
+  rect(x,cy,bw,bw, sel and 9 or CD)
+  rect(x+1,cy+1,bw-2,bw-2,CB)
+  spr(opp.spr,x+pad,cy+pad,-1,1,0,0,4,4)
+  rectb(x+pad-1,cy+pad-1,ps+2,ps+2, sel and CCR or CMAT)
+  -- Pulsing chevrons flank the selected portrait
+  if sel and (G.tick//15)%2==0 then
+   print(">",x-7,    cy+bw//2-3,10,true,1,false)
+   print("<",x+bw+2, cy+bw//2-3,10,true,1,false)
+  end
+  -- Name below the frame (with shadow)
+  local nx=x+(bw-#opp.name*6)//2
+  print(opp.name,nx+1,cy+bw+5,CB,true,1,false)
+  print(opp.name,nx,  cy+bw+4,sel and CCR or CT,true,1,false)
+ end
+
+ local h="ARROWS: select   A: duel   B: back"
+ print(h,(SW-#h*4)//2,SH-7,CD,true,1,true)
+end
+
+function handleOppSelectInput()
+ if btnp(0) or btnp(2) then OPP_SEL=math.max(1,OPP_SEL-1)
+ elseif btnp(1) or btnp(3) then OPP_SEL=math.min(#OPPONENTS,OPP_SEL+1)
+ elseif btnp(4) then startGame()
+ elseif btnp(5) then SCENE="menu" end
 end
 
 -- ============================================================
@@ -3118,15 +3721,14 @@ function dbCountInDeck(id)
  return n
 end
 
--- pmem layout: MAX_DECK card IDs at 5 bits each (so up to 31 unique cards),
--- packed 6 IDs per 32-bit slot. Slots 0..2 hold 6 IDs, slot 3 holds 2.
+-- pmem layout: MAX_DECK card IDs at 6 bits each (so up to 63 unique cards),
+-- packed 5 IDs per 32-bit slot across 4 slots (5*4 = 20 = MAX_DECK).
 function dbLoad()
  DB.deck={}
  for slot=0,3 do
   local v=pmem(slot)
-  local maxB=(slot<3) and 5 or 1
-  for b=0,maxB do
-   local id=(v>>(b*5))&0x1f
+  for b=0,4 do
+   local id=(v>>(b*6))&0x3f
    if id>0 and id<=#CARDS then
     table.insert(DB.deck,id)
    end
@@ -3139,10 +3741,9 @@ function dbSave()
  for i=1,MAX_DECK do ids[i]=DB.deck[i] or 0 end
  for slot=0,3 do
   local v=0
-  local maxB=(slot<3) and 5 or 1
-  for b=0,maxB do
-   local idx=slot*6+b+1
-   if idx<=MAX_DECK then v=v|(ids[idx]<<(b*5)) end
+  for b=0,4 do
+   local idx=slot*5+b+1
+   if idx<=MAX_DECK then v=v|(ids[idx]<<(b*6)) end
   end
   pmem(slot,v)
  end
@@ -3510,9 +4111,11 @@ function startGame()
  sync(3,1,false)
  newGame()
  dbLoad()
+ local opp=OPPONENTS[OPP_SEL]
+ G.oppName=opp.name
  local plrDeck=#DB.deck>0 and DB.deck or DECK1
  for i,id in ipairs(plrDeck) do G.deck[1][i]=id end
- for i,id in ipairs(DECK2) do G.deck[2][i]=id end
+ for i,id in ipairs(opp.deck) do G.deck[2][i]=id end
  shuffle(G.deck[1]); shuffle(G.deck[2])
  for _=1,4 do drawCard(1,true); drawCard(2,true) end
  startRPS()
@@ -3535,6 +4138,11 @@ function TIC()
  if SCENE=="menu" then
   handleMenuInput()
   drawMenu()
+  return
+ end
+ if SCENE=="oppselect" then
+  handleOppSelectInput()
+  drawOppSelect()
   return
  end
  if SCENE=="deckbuild" then
@@ -3844,90 +4452,6 @@ end
 -- 093:00ffff000f07f0f0f07f000ff007f00ff0007f0ff007f00f0f7f00f000ffff00
 -- 094:00ffff000f0f00f0f07ff00ff077ff0ff007700ff07ff70f0f0770f000ffff00
 -- 096:011100001a1a100011a110001a1a100001110000000000000000000000000000
--- 134:0000000000000000000000000000000800000880000808080009880800088880
--- 135:000000000000800108888888888880100088880080000100008100001000009a
--- 136:10000000000000000108888008888888001088800000800800018100aa200000
--- 137:0000000000000000000000008800000008080000880800008088000000898000
--- 149:0000000000000000000000000000000000000000000000000000000000000008
--- 150:0088888808988800088808109888809f0888870a0888920b8888899077882999
--- 151:080009280100098000000120f9ffff9f22aaaaa8aaa2a2a20aa292090a29880a
--- 152:82a0000100a0001002200000f999ff9f89aaaaa28a2aa2a2201a82aa800882a0
--- 153:888888000008888001100888f90788872f088890a09998880998888899998887
--- 154:0000000000000000000000000000000000000000000000008000000080000000
--- 162:0000000000000000000000000000005500000000000000000000000000000000
--- 163:000000000000000000000000000000005000000005005222055005990055005f
--- 164:00000000000000000000000000000000000000002222225099999a00ffffff25
--- 165:000000080000000800000588000054444004000000000522045002a9055052ff
--- 166:88999999888829998888299944444444000000002222222099999950ffff9500
--- 167:f0aa08a09f0aa2889f02228a4440222200000202005550800599902259ffff01
--- 168:89a02aa0802229098882a8098a880044280000000880555522099999207fffff
--- 169:9999998899997888999928884444444500000005555005009940050095005052
--- 170:8800000080000000000000005000000000000000522222222fffffffffffffff
--- 171:0000000000000050000004000000000500000052222222aff99f9ffffffffff9
--- 172:455555550000000000000000522250059f000040f20005009500050150054089
--- 173:5550000050000000500000000000000000000000000000000000000000000000
--- 178:000000000000000000000000000000ff00000fff0000ffff009ffcf509fffcf5
--- 179:0005000500004005957005000c7000504f0f0055c0700005cf000000f700fccf
--- 180:9fffff998ffffffa52ffffff059fffff0089ffff5052ffff50002fff040059ff
--- 181:000029ff5005afff2002ffff2582ffff9889fffff22ffff2ffffff25fffff850
--- 182:fff25004fff50059ff50059f950004ff800004ff500004ff005004ff040004ff
--- 183:9ffffff7fffffffffffff455ffff5000fff40055fff40000fff40000fff40000
--- 184:0ffffff9cffffff55555555000000000555555000000000055555544ffffffff
--- 185:500005af005002ff000059ff500059ff550059ff000059ff445059ffff5059ff
--- 186:fffffffffffffffffff45555ff450000ff450550ff450004ff450004ff450004
--- 187:fffffff2fffffff254fffff2054fffff004fffff054fffff054fffff054fffff
--- 188:50550881504002015000d0019000700190001008700510009000005d90000055
--- 189:00000000000000d200000d5a00d005e90dd598d0055502dd255dd89118dedd80
--- 190:9990000080800000010000000000000020000000000000000000000000000000
--- 193:00000000000000090000000f0000009f000000ff000009f0000009fc0000095f
--- 194:0fffcc70ffccc47fff00c0f7fcc0f0f4f00f5fff7ff72974c8709800ff020077
--- 195:f890c77c0070ffff00fc000f7ff07755740777774500207c5ff5020770002205
--- 196:705002ffc05505f2fc0505f2ff0505f95f0505f2750505f2550505f2750505f2
--- 197:fffff000222220042222200599222005aa222005222220052222200422222004
--- 198:550004ff00000444000004440000044400000444000005f50005005f00055005
--- 199:fff4000044f4000044f40000ffff50004445f50044445ffff4444444f5444444
--- 200:fffffffff44444445555f4440005fcff0005f444fffff4444444444444444444
--- 201:ff5059ff4f505f224f505f22cf505f994f505fa24f505922cc000599f5000059
--- 202:ff4500042245000422450004224500042245004422ff50002222f55522222ff5
--- 203:054fffff0542222f0542222f0549922f054a222f0542222f0042222f5542222f
--- 204:70000dd5700005559000555d9000555d9000528d700010827005122070000220
--- 205:088ddd50d0a00000ddd00000dddd5500eddd5500dddd55002885080009922800
--- 209:000009f000000000000000000000000000000000000000000000000000000000
--- 210:f0009f7700f10750008807000002f00000ff7000000000000000000000000000
--- 211:09998207988990579878905790020f7020027f040002c0500082000000004505
--- 212:704505f27500022205000f2240082222005922f9002f998502f9250022250000
--- 213:2222200422222005222f2004ff85000455000055000005500004500005500000
--- 214:0000550000000050000000500000000000000009002222820002228200022209
--- 215:5fffffff00000000000000002f999f80229992922a08222929008229229992a8
--- 216:ffffffff0000000000000000002999990922aaa2022a0082022a0002022a0202
--- 217:5005500500500500005005000000005598000000290222002902120029021000
--- 218:9f222222002f22220050ff220000552f55000000055500000000500000000055
--- 219:ff92222f2222222f2222222f2222222f29f222f20579729700552f2f0000052f
--- 220:70000227700512877000828770005280005005898054050820055555f2005005
--- 221:50002000fff00000ff780d70f08800dd008d905528888708d8810022ddd00000
--- 222:0000000000000000000000005800000009100000280000000000000000000000
--- 226:0000000000000000000000000000000000000000000000050000005000000055
--- 227:0005000200050028055002005000000550000045000555000550000050000ccc
--- 228:200000550000055000555000550000005000000000000000000000000c0cc000
--- 229:000000000000000000000000000000000000000000000000000000000ccc0ccc
--- 230:000022090000228200022282000222820002220900222200000000000000f0f0
--- 231:22aaa2982a80222a2a00022a22aaa22a222222208aaaaa0000000000f00f000f
--- 232:022a0202022a0202022a00020222aaa209222222008aaaaa00000000ff0ff000
--- 233:29029000290290002a0210002a0110009001220000222200000000000ff00f00
--- 234:00000000000000000000000000000000000000000000000000000000f000fff0
--- 235:550000050555000000005500000000050000000000000000000000000f00f00f
--- 236:827005550520005000020005500000005500000000555000000000550fff0005
--- 237:d8800000d8000000000000000000000040000000000000000550000055500000
--- 243:000000c0000000c0000000c0000000c000000000000000000000000000000000
--- 244:000c00000c0c00000c0c00cc0c0cc00000000000000000000000000000000000
--- 245:0c0c0c0c0ccc0c0c0c0c0c0c0ccc0ccc00000000000000000000000000000000
--- 246:0000f0f000000f0000000f0000000f0000000000000000000000000000000000
--- 247:f00f000ff00f070ff00f000f0ff0000f00000000000000000000000000000000
--- 248:00000000000ff0700f0ff000ff0ff00000000000000000000000000000000000
--- 249:f00f0f00f00f0ffff00f0f000ff00f0000000000000000000000000000000000
--- 250:f000f000f000f000f000f0f0f000fff000000000000000000000000000000000
--- 251:fff0f00ff0f0fffffff0f00ff0f0f00f00000000000000000000000000000000
--- 252:0f0500000fff50000f0050000fff000000000000000000000000000000000000
 -- </TILES1>
 
 -- <SPRITES>
@@ -4059,6 +4583,70 @@ end
 -- 125:4444444444444444000000000000000000000000000000000000000000000000
 -- 126:4444444444444444000000000000000000000000000000000000000000000000
 -- 127:4444444444444444000000000000000000000000000000000000000000000000
+-- 128:0006000000000606600000000060600000060060aa0000008aa0000008aa0000
+-- 129:600000000060000a0000000a0600000a0000000aa00a000aaa0aa00aaa0aaa0a
+-- 130:a7006006a7000000a7000600a7000600a7000066870079008700aa0a870aa9aa
+-- 131:000006006066000000000660006000000000007a90007aa0a07aa8059aaa7000
+-- 132:000000000000aaaa0000aaaa00008aaa00a80aaa00aaaaaa00aaaaaa00aaaaaa
+-- 133:0000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+-- 134:000000000aaaaa00aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+-- 135:00000000a0000000aa000000aaaa0000aaa80000aaaa0000aaaaa000aaaaa000
+-- 136:0000000000000000000000000000000000000000000000000000000800000002
+-- 137:0000000000000000000222200022222200222222022222222222222222222222
+-- 138:0000000000000000022920002222220022222900222222902222229929999989
+-- 139:0000000000000000000000000000000000000000000000000000000090000000
+-- 140:0000000ff000000ff000000ffff0000f7ffff00f77ffffff077ff7ff07777f7f
+-- 141:f77770fff7770fffff777fffff770fff7f770ff77ff77ff7fff7ff77fff7ff77
+-- 142:777ffff777708ff7777787777777777777770770f777000ff77770fff77777ff
+-- 143:00000f000000f700000ff70000fff700ffff7700f7ff7700fff77700fff77000
+-- 144:0078a00906078a090000780a0560070a600000770007aa7a0aaaa7a7a788709a
+-- 145:aa07aaaaaa087aa00a0777aa0a07777aa7aa70007aaa7899aaa70899aa088999
+-- 146:877aaa0a87aaaa0a87a08a0a7a078a0aa0008a0a99978aa099978aaa99987a99
+-- 147:9aa7000098000600a0006000a0060066aa000000009aaa00aaaa08a0aaa7a078
+-- 148:00aaaaaa00aaaaaa00aaaaaa0aaaaaaa0aaaaaaa0aaa8aaaaaa8aaaaaaa888a8
+-- 149:aaaaaaaaaaaaaa8aaa8aaa88aa8aaaa8a888a8a8a8a8a88aa8a88a88a8a88888
+-- 150:aaaaaaaaaaaaaaaaaa88aaaa8aa88aaa888a888a888888888888888882200008
+-- 151:aaaaaa00aaaaaa00aaaaaa0088aaaa00a88888a08a88888a8a88888888a88880
+-- 152:0000008200000022000008220000082200008822000888820000088200000888
+-- 153:2222922922222222822222828282222282828222880828228882822280280228
+-- 154:2992999922222228222282282222828222228282222288828222888282228282
+-- 155:9200000022000000229000008280000082880000828980002820000028200000
+-- 156:007777ff00777f70ff0777f0f7f777707ff777777777077777777770007700ff
+-- 157:ff70f077f7ff7f77f77f7f77f70fff77f0ffff77ffffff07fffff707fff7f7f7
+-- 158:f70777f7f7f7777ff7ff777f77ff877777ffff0770fffff7707ffff07f7f7fff
+-- 159:f77770077f77070f77777fff777077f77707f777777f777770777777ff077770
+-- 160:7700907a0000907a6000907a6600007a0066007a0006607a0000607a00600080
+-- 161:a077f999806f00f980606f8980f66f9980000099809999998099999980999999
+-- 162:999907009970f66f900606ff990f66f0990000099999999f7099999779999970
+-- 163:000787a0008f078a708f00607087066000706600876600000660000066000000
+-- 164:a0a888a8a0a888a8a0a888a8a0a888a800a88888000a8888000080880000a088
+-- 165:a88a8888a88a8888a8800988a8808f9988a8f99988889909888a999088880999
+-- 166:88008f2880f88f2882ff99228999999299999992999999929999992099099922
+-- 167:20aa8888220888882288a8082088a80a02888800228888002200088022004880
+-- 168:0000080800000029000000290000000900000002000000000000000000000000
+-- 169:808088200008088890f400089099299890999900229f090980ff099907ff0999
+-- 170:888888028888800088004f090992290999999929099999900999908099999800
+-- 171:880000009800000090000000900000000000000000000000000f000007ff0000
+-- 172:fffffffffff0f0f770ff0f7f0f70f7f0f70f0f7f07f07700f00070000f000f00
+-- 173:ffff8777ff7f0077ff7008200700828207880aaa870f002a000fdf8828228888
+-- 174:77707f7f7700fff70280ff70282880ffaaa088f7a20070f888fdf0f088882882
+-- 175:ff7fff00f0ff7f007f7f777f77f7f00700700f00f77770ff00770f007077f000
+-- 176:0000608000000080000000a0000050a7000000770000000f0000000f00000050
+-- 177:80099997a000f999a0008f99a0069809a077ff70007050f770ff007570075075
+-- 178:77999700999970009990006697080607077f0777770557775555700755557077
+-- 179:0066000066000000000000007f750000f0500000f5500000f550007005000000
+-- 180:00000a0800000000000000000000000000000000000000000000000000000000
+-- 181:000000990000a000000000000000004400000044000044440000440400044444
+-- 182:9999920299999022499922044400824444402244444022444400924440ffff44
+-- 183:20444a8044444080444444a0444444404444404444444444044444f444444444
+-- 184:0000000f000000f7000000770000000700000007000000770000000700000ff0
+-- 185:f7ff099077ff0999707f0099707f0209707f0000777ff0007777f00000000fff
+-- 186:099908009990807f9990877f9920077f00000777000007770f000777ff000700
+-- 187:7ff00000fff00000fff00000fff00000fff000007f00000077000070000fff07
+-- 188:00ff7777077777070000777700ff7707000770770000000000000000000000dd
+-- 189:02022222700222227a002222707702227a0788820a0f0220005f5000055f5ddd
+-- 190:0222202702228007222200a722207707288077a00220f00700007550dd507550
+-- 191:777777ff777000007007000077000000777700000000000000000000d0000000
 -- 234:0000000800000080000000880000088900008998000890890008908900890890
 -- 235:8000000008000000880000009880000089980000980980009809800009809800
 -- 236:0000000000000000000000000000000000000008000008890000899900089999
@@ -4148,6 +4736,12 @@ end
 -- 071:cc05c411cdd00cc50ddd0cc1000000c8c00000c540000cc1482004c542224241
 -- 072:66ddd6666dddd663dddd66e3dddd60e3dddd60e36dddde776666631766666033
 -- 073:66d66ddd36dddddd3e6ddddd3e06dddd3e06dddd77edd6dd713d66d633366666
+-- 074:000005770000dd5507772d0007750220075009930705303d002200300500303d
+-- 075:757000000750000007ff3300037f00000077f0000277f2000277f2000277f200
+-- 076:33b33333b3333d3033333dd133a0dd003adadd0a3dad0990ddf0f114ddf0114f
+-- 077:3333b333833d33b310dd33331a0dd33baa090d33a0990dd34411dd0d4f41100d
+-- 078:88222822882222f78222227088222778882228098820000382200000820b0000
+-- 079:224444f477ffffff90ff4fff984444449244f444024f444402444343b0444333
 -- 080:5d5555b55d555559ddd5dd94dddddd11dddddd11dddd9911ddb99199ddb9bddd
 -- 081:595bbbdd5995bbdd19599ddd9bbbdddddb999dddd999999d99dddddd9fdddddd
 -- 082:4444f79944444f99444449954444795944448555444405554440555544455554
@@ -4158,6 +4752,44 @@ end
 -- 087:24242451544241114484ddd144661111c4d61114c4641d11c466681144646141
 -- 088:d6666ae3dd6663a0dd66673ad666a37ad6062a0a737773a27337330a7733770a
 -- 089:3ea666660a36666da37666dda73a66dda0a260dd2a377737a0337337a0773377
+-- 090:022022300220929d00002200033355200350033303500ddd00d300d3003d3370
+-- 091:0335502023d3f0022227f3339227f553922f00303d700000330000003d330000
+-- 092:0302014433f331a03333011a3333aa1133d3daa3b3dddd03330dd0333b333333
+-- 093:14411033aaa10ff3aa113f33111a33333a003d3b30dddd3333ddddb3b333b333
+-- 094:8000000b880b00b088b000008b0000b000000000000000b00000000000000000
+-- 095:0044333300444484004ff448004ff244004dd214004fdf12002dd211002dd211
+-- 096:5555555d555555d7555555095555fd0055500dd755dfddd155d000775dfd7700
+-- 097:d555555570d5555d7755d77707007077707770dd077707dd707777707777077d
+-- 098:55555550555e5eb0ee55e50955555b09ee5b77a955b7777a5b77077750770079
+-- 099:055555550be555e590055e55995555550a77b555a7777b55777007b59770770e
+-- 100:00767677076060677760000676020200760000007760000a7776aaa07776f2f0
+-- 101:7770000077770000777777006777777006676677000600770000006700000006
+-- 102:dd5555aad54445a855444589554c488858888899583302885833c02455838080
+-- 103:aa5555dd8a51115d98511155888121559988888588f82aa5420a82a522008855
+-- 104:555555555555555a555555af555555a0fffff5f9ff99fafa57979fff9fff7aaa
+-- 105:55555555a5555cc5ff55c55c0a55c55c9a555cc59df5aaaadd9f5aa5aa7a55a5
+-- 112:5df070715020070709dd7077d0dd0777ddd77077007700770770177070017701
+-- 113:77001117770207dd07909ddd091010dd9010d00d011ddddd101ddddd000ddddd
+-- 114:5b772299557707d055b50777e5e507de555507775e5507d7e5557d7755557777
+-- 115:992277b57d7077b577705b55ed70e5e57770555e7d70575577d77775777755e5
+-- 116:77760f0007760000007600000077600000776000077760000777600000777666
+-- 117:00000006000000670000a0670000aa7700000677000006700000670066667700
+-- 118:55588880558a8000880070008999000a89990afa589904425890a200d8902a22
+-- 119:0028855520020855a4a00888aa029998a0a2999800709985777a09850008098d
+-- 120:5fff0a7ff5fff9975ff590fa555f9ffa5555f7ff555fff7f55affff7550aa0ff
+-- 121:ffaff5a5017ffa55ff0ffa55afaffa55a0a55a557fff5555ffff5555fffaa555
+-- 160:0077999200779992007799920077999200778992000799920077999800779980
+-- 161:22222977222229702222297022222090222222972aa2009700a2299700220997
+-- 162:555555555555500055550999555509995555097755550999dddd0977d5d50999
+-- 163:55555555055555559005555599905555999055559790555599905d5d9790d5d5
+-- 164:999992922922229922929292222fe2992ffeee999ff6e6f529e9005029299955
+-- 165:22999299ff99929922f29929ffff992955555599540555595555055955555505
+-- 176:0077999907777999007778997077708877888888777788880077770800077777
+-- 177:2222299722222897902029908888997788889977888899078888897088888770
+-- 178:5d5d0979dddd0999dddd09792ddd09992aaa099922a209992222099988888888
+-- 179:799055559790dddd999adddd99777ddd99777222997722229997788888008888
+-- 180:292111559919111592111110222211ff22922fff99999f229922999299222922
+-- 181:55545555555555595450509945050f99fffff222ffff92292992999999922999
 -- 192:000070050000500000500000000005000500000005000000000000055000005f
 -- 193:0005550005057775000000500550000000000505000000057c505770fc700700
 -- 194:5555522f555552af555552af2555552f555550af2555502f2255555f5055555f
@@ -4198,6 +4830,14 @@ end
 -- 229:7ddddd00df0dd00050770000500ff000dd007780dd000828dd000dd280500d00
 -- 230:ddedddeededddedddeddedfddeddeddf0e00e00f0ecce0f00e0cce000ecc0cee
 -- 231:eedddeddddedddeddfdeddedfddeddedf00e00e00f0ecce000ecc0e0eec0cce0
+-- 232:8888808800005555855883335555a3a350853a3a580555555805303358533003
+-- 233:800880085555880833380808a3a308803a3a0088555550003303588830033588
+-- 234:cf4fc4cc4cf4ccccfcccccc44fcccf4f4ccfcc4f4ccffc444ffcccf4cff44444
+-- 235:fcccc44cccfcc4c44cfccccff4cccfc4f4ccfccf44cfcfcc4fffccfc44444cc4
+-- 236:0401000004400040415544552d5445d49d445d4d1d45d4d54245d4d5024554d4
+-- 237:2222205422511155ddd11100444d2942ddd25214555d259044450490dd440410
+-- 238:9989999998999999899999989999998999999899999989999998990899899981
+-- 239:977999998977999899700989991111779111118911111887f1f180091f180099
 -- 240:00cc0cf0004040f40040c0f0404000ff04004000c0000000cc00000004c4cccc
 -- 241:444400044400000c044004c0400000400000440cf4004ccc004cc404cccc0040
 -- 242:0000d0000000d00d5555bb3d553311115b311188553b31115555533355555555
@@ -4206,6 +4846,14 @@ end
 -- 245:728000000020000000000000000080007777900007770220d0009080ddd00000
 -- 246:00c0000c0cce00cc0c00eeeccc00000cc00f000cc000000c0000000c0000000c
 -- 247:c0000c00cc00ecc0ceee00c0c00000ccc000000cc000f000c0000000c0000000
+-- 248:8535333355353311853351998833331988553331800355338885335300855555
+-- 249:3333530811335308991533089133338813335500335530803533580055555008
+-- 250:4cc44ff4cfccfff44cfcfcf4fccfccf44cccccc4fc4fcf44c4f4cfcc44fcfcfc
+-- 251:4ff44ffc4ffffffc4fcffcc44cccffcc4ffcccfc44cfcc4fcc4ccfc44c4cfcfc
+-- 252:211124dd92209544990205559929004dd4920104dd9910002222200042205051
+-- 253:d45424494d445009dd4041004400400050041024004440142200554520dd4055
+-- 254:9899011189911111991111119981111877288880792000009982078998999799
+-- 255:1f80789918070999877099997789999878999989099998999999899999989999
 -- </SPRITES1>
 
 -- <WAVES>
