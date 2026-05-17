@@ -1,7 +1,7 @@
 -- title:   YGO80
 -- author:  draovar
 -- desc:    Yu-gi-oh Speed duel for tic80
--- version: 0.2
+-- version: 0.1
 -- script:  lua
 --
 -- ============================================================
@@ -428,10 +428,19 @@ DECK_MARIK = {
 
 -- Selectable opponents. spr = top-left tile of a 32x32 (4x4 tile) portrait.
 OPPONENTS={
- {name="YUGI",  spr=384, deck=DECK_YUGI},
- {name="JOEY",  spr=388, deck=DECK_JOEY},
- {name="KAIBA", spr=392, deck=DECK_KAIBA},
- {name="MARIK", spr=396, deck=DECK_MARIK},
+ {name="YUGI",  spr=384, deck=DECK_YUGI,  quotes={
+  "I believe in the Heart of the Cards!",
+  "Because I have friends who believe in me, I can fight!"}},
+ {name="JOEY",  spr=388, deck=DECK_JOEY,  quotes={
+  "I'm gonna take this loser to school!",
+  "It's Wheeler time, baby!"}},
+ {name="KAIBA", spr=392, deck=DECK_KAIBA, quotes={
+  "You're a third-rate duelist with a fourth-rate deck!",
+  "Why don't you go look for an opponent you can actually beat? Like an infant, or a monkey."}},
+ {name="MARIK", spr=396, deck=DECK_MARIK, quotes={
+  "The shadows hunger for your soul.",
+  "Is that fear in your eyes? I like to see this side of you.",
+  "Mercy is for the weak, like you, my friend."}},
 }
 OPP_SEL=1
 
@@ -4102,8 +4111,65 @@ end
 function handleOppSelectInput()
  if btnp(0) or btnp(2) then OPP_SEL=math.max(1,OPP_SEL-1)
  elseif btnp(1) or btnp(3) then OPP_SEL=math.min(#OPPONENTS,OPP_SEL+1)
- elseif btnp(4) then startGame()
+ elseif btnp(4) then startOppConfirm()
  elseif btnp(5) then SCENE="menu" end
+end
+
+-- ============================================================
+-- OPPONENT CONFIRM DIALOG
+-- ============================================================
+CONFIRM_DUR=300  -- frames before the dialog auto-advances to RPS (~5s)
+
+function startOppConfirm()
+ local opp=OPPONENTS[OPP_SEL]
+ CONFIRM={timer=0, quote=opp.quotes[math.random(#opp.quotes)]}
+ SCENE="oppconfirm"
+end
+
+function tickOppConfirm()
+ CONFIRM.timer=CONFIRM.timer+1
+ if CONFIRM.timer>=CONFIRM_DUR then startGame() end
+end
+
+function handleOppConfirmInput()
+ if btnp(4) then startGame()
+ elseif btnp(5) then SCENE="oppselect" end
+end
+
+function drawOppConfirm()
+ local opp=OPPONENTS[OPP_SEL]
+ -- Background (matches opponent select)
+ cls(CMAT)
+ for y=0,SH-1,4 do for x=0,SW-1,4 do pix(x,y,CB) end end
+ rectb(0,0,SW,SH,9)
+
+ -- Centered dialog box: gold border, black interior
+ local bw,bh=184,82
+ local bx,by=(SW-bw)//2,(SH-bh)//2
+ rect(bx,by,bw,bh,9)
+ rect(bx+2,by+2,bw-4,bh-4,CB)
+
+ -- Framed 32x32 portrait, top-left of box
+ local px,py=bx+8,by+8
+ spr(opp.spr,px,py,-1,1,0,0,4,4)
+ rectb(px-1,py-1,34,34,CCR)
+
+ -- Opponent name + quote, to the right of the portrait
+ local tx=px+40
+ local tw=bx+bw-tx-8
+ print(opp.name,tx,py+1,CCR,true,1,true)
+ printWrap(CONFIRM.quote,tx,py+11,tw,CT,by+bh-18)
+
+ -- Slowly flashing call to action, centered in the lower band
+ if (G.tick//30)%2==0 then
+  local d="It's time to duel!"
+  local dw=print(d,0,-20,0,false,1,false)  -- measure proportional width offscreen
+  print(d,bx+(bw-dw)//2,by+bh-26,10,false,1,false)
+ end
+
+ -- Controls hint
+ local h="A: duel   B: cancel"
+ print(h,(SW-#h*4)//2,by+bh-10,CD,true,1,true)
 end
 
 -- ============================================================
@@ -4546,6 +4612,12 @@ function TIC()
  if SCENE=="oppselect" then
   handleOppSelectInput()
   drawOppSelect()
+  return
+ end
+ if SCENE=="oppconfirm" then
+  handleOppConfirmInput()
+  if SCENE=="oppconfirm" then tickOppConfirm() end
+  if SCENE=="oppconfirm" then drawOppConfirm() end
   return
  end
  if SCENE=="deckbuild" then
