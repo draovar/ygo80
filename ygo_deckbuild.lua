@@ -73,7 +73,7 @@ function drawDBInfo(cd)
 
  -- Portrait 32x32 (shifted up for spell/trap since no stars above)
  local artY=(cd.cat=="monster") and by+22 or by+19
- if cd.spr then spr(cd.spr,bx+5,artY,cd.bg,2,0,0,2,2) end
+ if cd.spr then spr(cd.spr,bx+5,artY,-1,2,0,0,2,2) end
 
  -- Right of portrait: stats (monster) or subtype icon+label (spell/trap)
  if cd.cat=="monster" then
@@ -101,10 +101,30 @@ function drawDBInfo(cd)
  local lbl,col=typeInfo(cd)
  print(lbl,bx+5,by+62,col,true,1,false)
 
- -- Description (small font, wrapped)
- if cd.desc then printWrap(cd.desc,bx+5,by+72,bw-10,CD,by+bh-10) end
+ -- Description (small font, wrapped, scrollable with UP/DN). cd~=G.infoShown
+ -- detection isn't needed here -- scroll is reset to 0 by the close handlers.
+ local scrollable=false
+ if cd.desc then
+  local dx,dy,dmaxY,lineH=bx+5,by+71,by+bh-10,7  -- by+71 (not +72) so 35px fits exactly 5 rows
+  local visN=math.floor((dmaxY-dy)/lineH)
+  local lines=wrapLines(cd.desc,bw-16)  -- -16 leaves a right gutter for the scroll arrows
+  local maxScroll=math.max(0,#lines-visN)
+  scrollable=maxScroll>0
+  local off=math.max(0,math.min(G.infoScroll or 0,maxScroll))
+  G.infoScroll=off
+  for i=1,visN do
+   local li=off+i
+   if li>#lines then break end
+   print(lines[li],dx,dy+(i-1)*lineH,CD,true,1,true)
+  end
+  -- scroll indicators: up/down triangles at the right edge of the desc area
+  local ax=bx+bw-9
+  if off>0       then tri(ax,dy+1,ax+5,dy+1,ax+2,dy-2,CT) end
+  if off<maxScroll then tri(ax,dmaxY-3,ax+5,dmaxY-3,ax+2,dmaxY,CT) end
+ end
 
- print("B:close",bx+bw-46,by+bh-8,CD,true,1,true)
+ if scrollable then print("UP/DN scroll  B close",bx+5,by+bh-8,CLEG,true,1,true)
+ else                print("B:close",bx+bw-46,by+bh-8,CLEG,true,1,true) end
 end
 
 function drawDeckBuild()
@@ -144,7 +164,7 @@ function drawDeckBuild()
   local iy=9+(i-1)*DB_LIST_RH
   local isSel=(DB.cur.panel==2 and DB.listSel==ci)
   if isSel then rect(DB_LX,iy,SW-DB_LX,DB_LIST_RH-1,CHL) end
-  if cd.spr then spr(cd.spr,lx,iy,cd.bg,1,0,0,1,1) end
+  if cd.spr then spr(cd.spr,lx,iy,-1,1,0,0,1,1) end
   local nm=#cd.name>18 and string.sub(cd.name,1,18)..".." or cd.name
   print(nm,lx+9,iy+1,isSel and CB or CT,true,1,false)
   local cnt=dbCountInDeck(slug)
@@ -204,7 +224,9 @@ end
 
 function handleDeckBuildInput()
  if DB.info then
-  if btnp(5) then DB.info=nil end
+  if btnp(0) then G.infoScroll=(G.infoScroll or 0)-1
+  elseif btnp(1) then G.infoScroll=(G.infoScroll or 0)+1
+  elseif btnp(5) then DB.info=nil; G.infoScroll=0 end
   return
  end
  if DB.menu then

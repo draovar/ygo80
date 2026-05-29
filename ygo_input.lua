@@ -13,53 +13,99 @@ function resetTurnFlags()
  G.legionSummonUsed=false
  G.legionSearchUsed=false
  G.extraSpellcasterSummon=false
- G.legionSearchPending=false
 end
 
-function legionSearch(onDone)
- if G.legionSearchUsed then if onDone then onDone() end; return end
+-- Legion: search deck (+ GY when Necrovalley is not active) for a
+-- vanilla Spellcaster and add it to hand. Yields via choose{}, so callers
+-- must invoke this from inside a proc coroutine frame.
+function legionSearch()
+ if G.legionSearchUsed then return end
  G.legionSearchUsed=true
- local captured={}
  local items={}
  local function addItem(source,card,realIdx)
   if card.type=="spellcaster" and not card.effect then
-   local n=#captured+1
-   captured[n]={source=source,realIdx=realIdx}
-   table.insert(items,{deckIdx=n,name=card.name,atk=card.atk,def=card.def,lvl=card.lvl,desc=card.desc})
+   table.insert(items,{source=source,realIdx=realIdx,deckIdx=realIdx,card=card,
+    name=card.name,atk=card.atk,def=card.def,lvl=card.lvl,desc=card.desc})
   end
  end
  for i,id in ipairs(G.deck[1]) do addItem("deck",CARDS[id],i) end
- -- Necrovalley negates moving a card out of the GY: skip GY candidates.
- if not necrovalleyActive() then
+ if not staticActive("blocksGYMoves") then
   for i,card in ipairs(G.gy[1]) do addItem("gy",card,i) end
  end
- if #items==0 then if onDone then onDone() end; return end
- G.mode="sel_deck"
- G.deckSel={
-  items=items,sel=1,title="LEGION  SPELLCASTER",
-  onPick=function(idx)
-   local src=captured[idx]
-   if src.source=="deck" then
-    table.insert(G.hand[1],makeCard(table.remove(G.deck[1],src.realIdx)))
-   else
-    table.insert(G.hand[1],table.remove(G.gy[1],src.realIdx))
+ if #items==0 then return end
+ local ans=choose{kind="card",plr=1,items=items,title="LEGION  SPELLCASTER"}
+ if not ans then return end
+ local it=ans.item
+ if it.source=="deck" then
+  table.insert(G.hand[1],makeCard(table.remove(G.deck[1],it.realIdx)))
+ else
+  table.insert(G.hand[1],table.remove(G.gy[1],it.realIdx))
+ end
+end
+
+-- Response-window picker for cards with listens.X + optional=true.
+-- Reads G.proc.currentChoice (set by procRouteChoice when kind="response"
+-- and plr==1). Left/right cycle eligible responders, A activates the one
+-- at cursor, B passes priority. Both submit via INTENTS.RESPONSE.
+function handleChooseResponse()
+ local req=G.proc and G.proc.currentChoice
+ -- Defensive: if mode is "choose_response" but the actual request was lost
+ -- (cleared by a parallel code path, or never set due to a stale frame),
+ -- recover to free mode so the player isn't softlocked at the prompt.
+ if not (req and req.options and #req.options>0) then
+  G.mode="free"
+  if G.proc then G.proc.currentChoice=nil end
+  return
+ end
+ local c=G.cur
+ -- Zone helpers: convert listener.self {zone,col} <-> cursor {row,col}.
+ -- Hand is row=3 with cursor col = listener col - 1 (cursor is 0-based,
+ -- listener tracks 1-based hand index).
+ local function rowFor(s)
+  return (s.zone=="mon" and 1) or (s.zone=="hand" and 3) or 2
+ end
+ local function curColFor(s)
+  return (s.zone=="hand") and (s.col-1) or s.col
+ end
+ local function findOptIdx()
+  for i,opt in ipairs(req.options) do
+   local s=opt.self
+   if s.plr==c.side and c.col==curColFor(s) and c.row==rowFor(s) then
+    return i
    end
-   if onDone then onDone() end
-  end,
- }
+  end
+  return nil
+ end
+ if btnp(2) or btnp(3) then
+  local n=#req.options
+  local cur=findOptIdx() or 1
+  local nxt=btnp(3) and (cur%n+1) or ((cur-2)%n+1)
+  local s=req.options[nxt].self
+  G.cur={side=s.plr,row=rowFor(s),col=curColFor(s)}
+ elseif btnp(4) then    -- A: activate current responder
+  local idx=findOptIdx()
+  if idx then submitIntent(1,"RESPONSE",{optionIdx=idx}) end
+ elseif btnp(5) then    -- B: pass priority
+  submitIntent(1,"RESPONSE",{pass=true})
+ end
 end
 
 function handleInput()
  if G.winner then
   local elapsed=G.tick-(G.winTick or 0)
-  if elapsed>90 and btnp(4) then sync(3,0,false); SCENE="menu"; TITLE_SEL=1; G={tick=G.tick} end
+  if elapsed>90 and btnp(4) then sync(3,0,false); music(1,-1,-1,true); SCENE="menu"; TITLE_SEL=1; G={tick=G.tick} end
   return
  end
  if #ANIM>0 then return end
  if G.infoCard then
-  if btnp(5) or btnp(4) then G.infoCard=nil end
+  if btnp(0) then G.infoScroll=(G.infoScroll or 0)-1
+  elseif btnp(1) then G.infoScroll=(G.infoScroll or 0)+1
+  elseif btnp(5) or btnp(4) then G.infoCard=nil; G.infoScroll=0 end
   return
  end
+ -- Response window: a coroutine is waiting on a kind="response" choice.
+ -- Takes priority over normal navigation and other sel_* modes.
+ if G.mode=="choose_response" then handleChooseResponse(); return end
  local c=G.cur
 
  -- Deck selection (Sangan etc.)
@@ -74,39 +120,15 @@ function handleInput()
   local gy=G.gy[gv.plr]
   if btnp(0) then gv.sel=math.min(#gy,gv.sel+1)
   elseif btnp(1) then gv.sel=math.max(1,gv.sel-1)
+  elseif btnp(6) then if gy[gv.sel] then G.infoCard=gy[gv.sel] end
   elseif btnp(5) then G.mode="free"; G.gyView=nil end
-  return
- end
-
- -- Trap activation prompt (fires during opponent's turn)
- if G.mode=="trap_ask" and G.trapAsk then
-  if btnp(4) then
-   local ta=G.trapAsk
-   G.mode="free"; G.trapAsk=nil
-   if ta.fromHand then
-    discardFromHand(1,ta.handIdx,"cost")
-    ta.onYes()
-   else
-    activateTrapAnim(ta.col,ta.card,ta.onYes)
-   end
-  elseif btnp(5) then
-   local ta=G.trapAsk
-   G.mode="free"; G.trapAsk=nil
-   if ta.onNo then ta.onNo() end
-  end
-  return
- end
-
- -- Opponent-turn trap activation menu
- if G.mode=="opp_trap_select" and G.trapSelect then
-  handleOppTrapSelectInput()
   return
  end
 
  -- Discard picker (e.g. Magic Jammer cost): cursor on player hand
  if G.mode=="sel_discard" and G.discardSel then
   local n=#G.hand[1]
-  if n==0 then G.mode="opp_trap_select"; G.discardSel=nil; positionTrapSelectCursor(); return end
+  if n==0 then G.mode="free"; G.discardSel=nil; return end
   if c.row~=3 then c.row=3; c.col=0 end
   if btnp(2) then c.col=math.max(0,c.col-1)
   elseif btnp(3) then c.col=math.min(n-1,c.col+1)
@@ -154,10 +176,11 @@ function handleInput()
    c.col=math.min(3,c.col+1)
   elseif btnp(4) then  -- A: confirm attack
    local p=G.pending
-   p.tgtIdx=4-c.col
-   -- An attacker's onAttackDeclared hook (e.g. Gravekeeper's Assailant) may
-   -- run an interactive flow here, then resume via confirmPlayerAttack.
-   declareAttack(p.attacker,1,confirmPlayerAttack)
+   -- Direct attack iff opp has no monsters; else cursor col → opp data col.
+   local tgtCol=hasOppMon and (4-c.col) or nil
+   -- The intent handles push-then-raiseNow + chain + battle body. Validation
+   -- (e.g. target zone empty → "no target") rejects; player stays in sel_atk.
+   submitIntent(1,"DECLARE_ATTACK",{atkCol=p.atkCol,tgtCol=tgtCol})
   elseif btnp(5) then  -- B: cancel
    local col=G.pending and G.pending.atkCol or 2
    G.mode="free"; G.pending=nil
@@ -184,21 +207,12 @@ function handleInput()
      table.insert(p.tributes,col)
     end
     if tributeTotal(p)>=p.tribNeeded then
-     local tribs={}
-     for _,v in ipairs(p.tributes) do table.insert(tribs,v) end
-     local zones={}
-     for _,tcol in ipairs(tribs) do
-      table.insert(zones,{x=COL[tcol],y=PY_M})
-     end
-     animTribute(zones,function()
-      fireTributeSummonHook(p.card,1,tribs)
-      for _,tcol in ipairs(tribs) do
-       fireMonHook(G.mon[1][tcol],"onTributed",1)
-       sendMonsterToGY(1,tcol,"tribute")
-      end
-      G.mode="sel_mon"
-      G.cur={side=1,row=1,col=firstEmpty(G.mon[1]) or 1}
-     end)
+     -- Tributes picked; switch to zone-select. The SUMMON intent (fired
+     -- at sel_mon confirm) does the actual GY-move + anim. Initial cursor
+     -- prefers a truly-empty zone, else a tribute zone (will be vacated).
+     G.mode="sel_mon"
+     local initCol=firstEmpty(G.mon[1]) or p.tributes[1] or 1
+     G.cur={side=1,row=1,col=initCol}
     end
    end
   elseif btnp(5) then  -- B: cancel
@@ -211,35 +225,37 @@ function handleInput()
 
  -- Zone-select mode: cursor locked to valid target zones
  if G.mode=="sel_mon" then
+  -- A tribute col counts as empty here — it'll be empty after the SUMMON
+  -- intent processes (tribute happens atomically with placement).
+  local function zoneFree(col)
+   if not G.mon[1][col] then return true end
+   if G.pending and G.pending.tributes then
+    for _,t in ipairs(G.pending.tributes) do if t==col then return true end end
+   end
+   return false
+  end
   if btnp(2) then  -- left: skip to prev empty zone
    for col=c.col-1,1,-1 do
-    if not G.mon[1][col] then c.col=col; break end
+    if zoneFree(col) then c.col=col; break end
    end
   elseif btnp(3) then  -- right: skip to next empty zone
    for col=c.col+1,3 do
-    if not G.mon[1][col] then c.col=col; break end
+    if zoneFree(col) then c.col=col; break end
    end
   elseif btnp(4) then  -- A: place card
    local col=c.col
-   if col>=1 and col<=3 and not G.mon[1][col] then
+   if col>=1 and col<=3 and zoneFree(col) then
     local p=G.pending
-    local card=p.card
-    if p.action=="set" then
-     card=copyCard(p.card)
-     card.pos=2; card.facedown=true
+    local position=(p.action=="set") and "SET" or "ATK"
+    local ok=submitIntent(1,"SUMMON",{
+     card=p.card, col=col, position=position,
+     tributes=p.tributes, handIdx=p.handIdx,
+     extra=(p.action=="summon_extra"),
+    })
+    if ok then
+     G.mode="free"; G.pending=nil
+     G.cur={side=1,row=1,col=col}
     end
-    G.mon[1][col]=card
-    card.summoned=true
-    table.remove(G.hand[1],p.handIdx)
-    if p.action=="summon" or p.action=="set" then G.normalSummoned=true end
-    if p.action=="summon_extra" then G.extraSpellcasterSummon=false end
-    G.mode="free"; G.pending=nil
-    G.cur={side=1,row=1,col=col}
-    if G.legionSearchPending then
-     G.legionSearchPending=false; legionSearch()
-    end
-    if not card.facedown then fireSummonHook(card,1) end
-    checkAITraps("summon",{card=card,monIdx=col})
    end
   elseif btnp(5) then  -- B: cancel, return cursor to the hand card
    local idx=G.pending and G.pending.handIdx-1 or 0
@@ -259,24 +275,11 @@ function handleInput()
    local col=c.col
    if col>=1 and col<=3 and not G.st[1][col] then
     local p=G.pending
-    local card=copyCard(p.card)
-    if p.action=="cast_hand" then
-     card.facedown=false
-     G.st[1][col]=card
-     table.remove(G.hand[1],p.handIdx)
-     G.mode="free"; G.pending=nil
-     G.cur={side=1,row=2,col=col}
-     local b=behaviorOf(card)
-     if b and b.activate then
-      b.activate{col=col,card=card,zone="st",plr=1}
-     else
-      animSpellActivation(col,PY_S,card,1)
-     end
-    else
-     card.facedown=true; card.setThisTurn=true
-     G.st[1][col]=card
-     table.remove(G.hand[1],p.handIdx)
-     G.mode="free"; G.pending=nil
+    local t=(p.action=="cast_hand") and "CAST" or "SET_ST"
+    -- The intent clears G.mode + G.pending itself (so sub-modes set by
+    -- b.activate, e.g. MST's sel_st_target picker, aren't clobbered).
+    -- Producer only updates the cursor on success.
+    if submitIntent(1,t,{card=p.card,col=col,handIdx=p.handIdx}) then
      G.cur={side=1,row=2,col=col}
     end
    end
@@ -298,22 +301,23 @@ function handleInput()
    local ti=(c.side==2) and (4-c.col) or c.col
    local target=G.mon[c.side][ti]
    if target and not target.facedown then
-    local p=G.pending; G.mode="free"; G.pending=nil
-    local card=p.card
-    card.equippedTo={plr=c.side,col=ti}
+    local p=G.pending
+    local ok
     if p.action=="cast_equip" then
-     local stCol=firstEmpty(G.st[1])
-     if stCol then
-      card.facedown=false
-      G.st[1][stCol]=card
-      table.remove(G.hand[1],p.handIdx)
-      animSpellActivation(stCol,PY_S,card,1)
-     end
-    else  -- activate_equip (already in zone)
-     card.facedown=false
-     animSpellActivation(p.stCol,PY_S,card,1)
+     -- Equip from hand: CAST handles place + activate + equippedTo stamp.
+     ok=submitIntent(1,"CAST",{
+      card=p.card, handIdx=p.handIdx,
+      target={plr=c.side,col=ti},
+     })
+    else  -- activate_equip (face-down equip already in zone)
+     ok=submitIntent(1,"ACTIVATE",{
+      col=p.stCol, target={plr=c.side,col=ti},
+     })
     end
-    G.cur={side=1,row=2,col=firstOccupied(G.st[1]) or 1}
+    -- Intent clears G.mode + G.pending. Producer only updates the cursor.
+    if ok then
+     G.cur={side=1,row=2,col=firstOccupied(G.st[1]) or 1}
+    end
    end
   elseif btnp(5) then
    local idx=G.pending and G.pending.handIdx and G.pending.handIdx-1 or G.pending and G.pending.stCol or 0
@@ -348,9 +352,22 @@ function handleInput()
   elseif btnp(1) then  -- down
    G.menu.sel=math.min(#G.menu.items,G.menu.sel+1)
   elseif btnp(4) then  -- A: confirm
-   execAction(G.menu.items[G.menu.sel][2])
+   local key=G.menu.items[G.menu.sel][2]
+   if G.menu.onChoose then
+    local cb=G.menu.onChoose
+    G.menu={open=false,sel=1,items={}}
+    cb(key)
+   else
+    execAction(key)
+   end
   elseif btnp(5) and not G.menu.forced then  -- B: cancel (forced menus can't)
-   G.menu.open=false
+   if G.menu.onChoose then
+    local cb=G.menu.onChoose
+    G.menu={open=false,sel=1,items={}}
+    cb(nil)
+   else
+    G.menu.open=false
+   end
   end
   return
  end
@@ -424,18 +441,17 @@ end
 -- ============================================================
 function autoPhase()
  if G.active~=1 or G.winner or #ANIM>0 then return end
+ -- Pause auto-advance while any chain / response is in flight.
+ if procBusy() then return end
+ -- Auto-advance only in the "no manual action expected" phases. MAIN and
+ -- BATTLE require the player to click NEXT PHASE / END TURN (or take an
+ -- action). The ADVANCE_PHASE intent handles tickSwords + active flip +
+ -- new-turn setup inside PH_END.onExit — autoPhase just submits.
  if G.ph~=PH_DRAW and G.ph~=PH_STBY and G.ph~=PH_END then return end
  G.autoTimer=G.autoTimer-1
  if G.autoTimer<=0 then
   G.autoTimer=50
-  if G.ph==PH_END then
-   tickSwords()
-   G.turn=G.turn+1; G.active=2; changePhase(PH_DRAW)
-   G.normalSummoned=false; drawCard(2)
-   resetTurnFlags(); G.aiTimer=AI_DELAY
-  else
-   changePhase(G.ph+1)
-  end
+  submitIntent(1,"ADVANCE_PHASE",{})
  end
 end
 

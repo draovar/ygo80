@@ -6,18 +6,17 @@
 function behaviorOf(card) return card and card.effect and BEHAVIORS[card.effect] end
 
 -- Run a card's chain-link resolve function (does nothing if no behavior).
+-- Defaults ctx to {source=card} when nil — cards (e.g. Swords of Revealing
+-- Light setting swordsCounter on its own card) can rely on ctx.source being
+-- the resolving card without callers having to populate it.
 function applyResolve(card,plr,ctx)
- local b=behaviorOf(card); if b and b.resolve then b.resolve(plr,ctx) end
-end
-
--- Fire a monster event hook (onDestroy/onFlip/onTributed).
-function fireMonHook(card,event,plr)
- local b=behaviorOf(card); if b and b[event] then b[event](card,plr) end
+ local b=behaviorOf(card)
+ if b and b.resolve then b.resolve(plr, ctx or {source=card}) end
 end
 
 -- Helper: does `plr` have a monster in GY and a free zone to revive into?
 function canReviveMonster(plr)
- if necrovalleyActive() then return false end  -- Necrovalley negates GY revival
+ if staticActive("blocksGYMoves") then return false end
  if not firstEmpty(G.mon[plr]) then return false end
  for _,c in ipairs(G.gy[plr]) do if c.cat=="monster" then return true end end
  return false
@@ -32,28 +31,35 @@ function controlsDarkMagician(plr)
  return false
 end
 
+function controlsDragon(plr)
+ for c=1,3 do
+  local m=G.mon[plr][c]
+  if m and m.type=="dragon" and not m.facedown then return true end
+ end
+ return false
+end
+
 -- Raw field scan: true if any face-up card grants `flag`. `plr` restricts to
 -- one side; `skipTraps` excludes face-up Trap cards. No negation logic here —
 -- staticActive layers that on top.
+-- Static values may be either `true` (unconditional) or a function that
+-- returns truthy when the flag should be active (gkshaman's blocksFieldSpells
+-- only kicks in while Necrovalley is up).
 local function scanStatic(flag,plr,skipTraps)
+ local function check(card)
+  if not card or card.facedown then return false end
+  if skipTraps and card.cat=="trap" then return false end
+  local b=behaviorOf(card)
+  if not (b and b.static) then return false end
+  local v=b.static[flag]
+  if type(v)=="function" then v=v(card) end
+  return v and true or false
+ end
  for p=(plr or 1),(plr or 2) do
   for c=1,3 do
-   local m=G.mon[p][c]
-   if m and not m.facedown then
-    local b=behaviorOf(m)
-    if b and b.static and b.static[flag] then return true end
-   end
-   local s=G.st[p][c]
-   if s and not s.facedown and not (skipTraps and s.cat=="trap") then
-    local b=behaviorOf(s)
-    if b and b.static and b.static[flag] then return true end
-   end
+   if check(G.mon[p][c]) or check(G.st[p][c]) then return true end
   end
-  local f=G.fs[p]
-  if f and not f.facedown then
-   local b=behaviorOf(f)
-   if b and b.static and b.static[flag] then return true end
-  end
+  if check(G.fs[p]) then return true end
  end
  return false
 end
@@ -70,6 +76,21 @@ function staticActive(flag,plr)
  return scanStatic(flag,plr,trapsNegated)
 end
 
+-- Targeting protection: face-up Dragons are immune while Lord of D. is face-up
+-- (dragonProtect). Face-down monsters have no known type and are targetable.
+function canTargetMon(card)
+ if not card then return false end
+ if not card.facedown and card.type=="dragon" and staticActive("dragonProtect") then
+  return false
+ end
+ return true
+end
+
+function hasTargetableMon(plr)
+ for c=1,3 do if canTargetMon(G.mon[plr][c]) then return true end end
+ return false
+end
+
 -- True if either graveyard holds a monster (Monster Reborn target check).
 function anyGYMonster()
  for p=1,2 do
@@ -83,8 +104,23 @@ end
 -- Bind (either side) locks down monsters of Level 4 or higher.
 function attackBlocked(card,plr)
  if staticActive("blocksAttack",3-plr) then return true end
- if (card.lvl or 0)>=4 and staticActive("gravityBind") then return true end
+ if getMonLvl(card)>=4 and staticActive("gravityBind") then return true end
  return false
+end
+
+-- True if `card` (controlled by `ctrl`) is currently immune to destruction by
+-- battle. Consults the monster's `battleImmune` behavior hook, which may
+-- condition on whose turn it is (Rocket Warrior: only during ctrl's own turn).
+function battleIndestructible(card,ctrl)
+ local b=behaviorOf(card)
+ return (b and b.battleImmune and b.battleImmune(card,ctrl)) or false
+end
+
+-- True if battles involving `card` deal no battle damage to its controller
+-- `ctrl`. Consults the monster's `noBattleDamage` behavior hook.
+function battleDamageImmune(card,ctrl)
+ local b=behaviorOf(card)
+ return (b and b.noBattleDamage and b.noBattleDamage(card,ctrl)) or false
 end
 
 -- Decrement Swords of Revealing Light counters at an End Phase. Swords belongs
@@ -106,96 +142,10 @@ function isGravekeeper(card)
  return card and card.name and card.name:sub(1,13)=="Gravekeeper's"
 end
 
--- True if a face-up "Necrovalley" occupies either player's field spell zone.
-function necrovalleyActive()
- for p=1,2 do
-  local f=G.fs[p]
-  if f and not f.facedown and f.effect=="necrovalley" then return true end
- end
- return false
-end
-
--- True if opponent `plr` is blocked from activating a field spell
--- (Shaman + Necrovalley both on the field).
-function fieldSpellBlocked(plr)
- if not necrovalleyActive() then return false end
- for i=1,3 do
-  local m=G.mon[3-plr][i]
-  if m and not m.facedown and m.effect=="gkshaman" then return true end
- end
- return false
-end
-
--- Fire a monster's onSummon hook. Call this at every Normal/Special Summon
--- placement site, immediately after the monster lands face-up on the field.
-function fireSummonHook(card,plr)
- bumpStats()
- local b=behaviorOf(card)
- if b and b.onSummon then b.onSummon(card,plr) end
-end
-
--- Fire a monster's onTributeSummon hook. Call from each Tribute Summon path
--- AFTER the tributes are chosen but BEFORE they are sent to the GY -- the hook
--- inspects the tributed monsters. `tribCols` = list of monster-zone columns.
-function fireTributeSummonHook(card,plr,tribCols)
- local b=behaviorOf(card)
- if not (b and b.onTributeSummon) then return end
- local tributed={}
- for _,tcol in ipairs(tribCols) do
-  local m=G.mon[plr][tcol]
-  if m then tributed[#tributed+1]=m end
- end
- b.onTributeSummon(card,plr,tributed)
-end
-
--- Fire an attacker's onAttackDeclared hook at attack-declaration time, before
--- the attack resolves. The hook MUST eventually call resume() to continue the
--- attack -- immediately for a synchronous effect, or later (via resumeAttack)
--- after an interactive flow. With no hook, resume() runs directly.
--- NOTE: wired into the player attack path only; the AI attack path does not
--- fire this yet (no AI-piloted card needs it).
-function declareAttack(attacker,plr,resume)
- local b=behaviorOf(attacker)
- if b and b.onAttackDeclared then
-  b.onAttackDeclared(attacker,plr,resume)
- else
-  resume()
- end
-end
-
--- Continue an attack that an onAttackDeclared hook paused for an interactive
--- flow. The hook stashes its resume callback in G.attackResume; the menu or
--- picker that finishes the flow calls this.
-function resumeAttack()
- local r=G.attackResume
- G.attackResume=nil
- if r then r() end
-end
-
--- Returns true if face-down trap `t` on the field can chain to `event`/`ctx`.
--- `controller` = player who owns trap `t` (1 or 2). Trigger functions use it
--- to verify the acting player (ctx.actor) is their opponent.
-function trapCanRespond(t,event,ctx,controller)
- if not (t and t.facedown and not t.setThisTurn) then return false end
- if staticActive("blocksTraps") then return false end  -- Jinzo: Traps cannot be activated
- local b=behaviorOf(t); if not b or not b.triggers then return false end
- -- Event-trigger traps (Trap Hole, Mirror Force, Call of Haunted) respond
- -- directly to the triggering action, so they may only be activated as the
- -- FIRST link of the chain. Once a link exists they cannot be chained on
- -- (prevents chaining Trap Hole to Trap Hole / two Mirror Forces, and a
- -- trap responding to your own action via a later chain link).
- if not G.chain or #G.chain.links==0 then
-  local fn=b.triggers[event]
-  if fn and fn(t,ctx,controller) then return true end
- else
-  -- chain_open responders (Magic Jammer) fire only once a link exists.
-  local co=b.triggers.chain_open
-  if co and co(t,ctx,controller) then return true end
- end
- return false
-end
 
 -- AI Call of the Haunted resolve: revive AI's highest-ATK GY monster.
+-- Used by BEHAVIORS.callhaunted.activate when opts.plr==2 (AI manually
+-- activates from menu). The chain-response path uses cohSpecialSummon below.
 function aiResolveCallHaunted(stCol,trap)
  local best,bestI=-1,nil
  for i,c in ipairs(G.gy[2]) do
@@ -207,7 +157,30 @@ function aiResolveCallHaunted(stCol,trap)
   m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
   G.mon[2][emptyCol]=m
   trap.linkedMon=m; m.linkedTrap=trap
-  fireSummonHook(m,2)
+  summonEvent(m,2,emptyCol,"special",nil)
  end
+end
+
+-- Call of the Haunted's react body. Shared by listens.ATTACK and
+-- listens.PHASE. Runs as a coroutine — choose() yields
+-- until the player picks (or AI auto-resolves via aiAnswer's aiPickCard).
+-- self = listener self {card=trap,plr,controller,zone="st",col}.
+function cohSpecialSummon(self)
+ local plr=self.plr
+ local target=choose{
+  kind="card",from="gy",plr=plr,
+  filter=function(c) return c.cat=="monster" end,
+  title="CALL OF THE HAUNTED",
+ }
+ if not target then return end
+ local emptyCol=firstEmpty(G.mon[plr])
+ if not emptyCol then return end
+ local m=G.gy[plr][target.idx]
+ if not (m and m.cat=="monster") then return end
+ table.remove(G.gy[plr],target.idx)
+ m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
+ G.mon[plr][emptyCol]=m
+ self.card.linkedMon=m; m.linkedTrap=self.card
+ summonEvent(m,plr,emptyCol,"special",nil)
 end
 

@@ -3,7 +3,7 @@
 function startMonsterPlacement(handIdx,action)
  local card=G.hand[1][handIdx]
  if not card then return end
- local tribNeeded=tribsNeeded(card.lvl or 1)
+ local tribNeeded=tribsNeeded(getMonLvl(card))
  G.pending={handIdx=handIdx,card=card,action=action,tribNeeded=tribNeeded,tributes={}}
  if tribNeeded>0 then
   G.mode="sel_tribute"
@@ -58,7 +58,7 @@ function buildMenu()
      for i=1,3 do
       if not G.mon[1][i] then emptyZone=true end
      end
-     local tribNeeded=tribsNeeded(card.lvl or 1)
+     local tribNeeded=tribsNeeded(getMonLvl(card))
      -- fieldTributeValue counts Double Coston as 2 for DARK summons.
      local canSummon=(tribNeeded==0 and emptyZone)
                   or (tribNeeded>=1 and fieldTributeValue(card,1)>=tribNeeded)
@@ -71,7 +71,7 @@ function buildMenu()
      for i=1,3 do
       if G.mon[1][i] then monCount=monCount+1 else emptyZone=true end
      end
-     local tribNeeded=tribsNeeded(card.lvl or 1)
+     local tribNeeded=tribsNeeded(getMonLvl(card))
      if tribNeeded>=1 and monCount>=tribNeeded then
       table.insert(items,{"EXTRA SUMMON","summon_extra"})
      end
@@ -84,8 +84,11 @@ function buildMenu()
     if isMain and not card.summoned and not card.posChanged then
      table.insert(items,{"CHG POS","chgpos"})
     end
-    if isMain and not card.facedown and card.effect=="legion" and not G.legionSummonUsed and not G.extraSpellcasterSummon then
-     table.insert(items,{"EXTRA SUMMON","legion_extra"})
+    if isMain and not card.facedown then
+     local b=behaviorOf(card)
+     if b and b.ignition and (not b.ignition.canActivate or b.ignition.canActivate(card,1)) then
+      table.insert(items,{b.ignition.label,"ignition"})
+     end
     end
     if G.ph==PH_BATTLE and card.pos==1 and not card.facedown and not card.attacked
        and not attackBlocked(card,1) then
@@ -140,17 +143,7 @@ function execAction(key)
   G.infoCard=getHoveredCard()
 
  elseif key=="chgpos" then
-  local card=G.mon[1][c.col]
-  if card then
-   if card.facedown then
-    card.facedown=false; card.pos=1
-    fireMonHook(card,"onFlip",1)
-   else
-    card.pos=(card.pos==1) and 2 or 1
-   end
-   card.posChanged=true
-   checkEquips()
-  end
+  submitIntent(1,"CHANGE_POS",{col=c.col})
 
  elseif key=="summon" then
   startMonsterPlacement(G.cur.col+1,"summon")
@@ -158,8 +151,12 @@ function execAction(key)
   startMonsterPlacement(G.cur.col+1,"summon_extra")
  elseif key=="set" then
   startMonsterPlacement(G.cur.col+1,"set")
- elseif key=="legion_extra" then
-  G.extraSpellcasterSummon=true; G.legionSummonUsed=true
+ elseif key=="ignition" then
+  local card=G.mon[1][c.col]
+  local b=card and behaviorOf(card)
+  if b and b.ignition and b.ignition.activate then
+   b.ignition.activate(card,1,c.col)
+  end
  elseif key=="attack" then
   local atkCol=c.col
   local attacker=G.mon[1][atkCol]
@@ -184,23 +181,18 @@ function execAction(key)
   local card=G.hand[1][handIdx]
   if card then
    if card.subtype=="equip" then
+    -- Equip: pick monster target first (sel_equip), then submit CAST at confirm.
     G.pending={handIdx=handIdx,card=card,action="cast_equip"}
     G.mode="sel_equip"
     local startCol=firstOccupied(G.mon[1]) or firstOccupied(G.mon[2]) or 1
     G.cur={side=1,row=1,col=startCol}
    elseif card.subtype=="field" then
-    if fieldSpellBlocked(1) then return end
-    -- Field spell: goes straight to the FS zone, replacing any field spell
-    -- already there. No zone pick needed (one field zone per player).
-    local fcard=copyCard(card)
-    fcard.facedown=false
-    if G.fs[1] then sendFieldSpellToGY(1,"rule") end
-    G.fs[1]=fcard
-    table.remove(G.hand[1],handIdx)
-    G.mode="free"
-    G.cur={side=1,row=1,col=0}
-    animFieldSpellActivation(fcard,1)
+    -- Field: no zone pick needed; submit CAST directly. Intent owns G.mode.
+    if submitIntent(1,"CAST",{card=card,handIdx=handIdx}) then
+     G.cur={side=1,row=1,col=0}
+    end
    else
+    -- Normal / Continuous / Quick-Play: open S/T zone picker; CAST submitted at confirm.
     G.pending={handIdx=handIdx,card=card,action="cast_hand"}
     G.mode="sel_st"
     G.cur={side=1,row=2,col=firstEmpty(G.st[1]) or 1}
@@ -211,29 +203,26 @@ function execAction(key)
   local card=G.st[1][col]
   if card then
    if card.subtype=="equip" then
+    -- Equip activation: pick monster target first (sel_equip), then submit ACTIVATE.
     G.pending={stCol=col,card=card,action="activate_equip"}
     G.mode="sel_equip"
     local startCol=firstOccupied(G.mon[1]) or firstOccupied(G.mon[2]) or 1
     G.cur={side=1,row=1,col=startCol}
    else
-    local b=behaviorOf(card)
-    if b and b.activate then
-     b.activate{col=col,card=card,zone="st",plr=1}
-    elseif card.cat=="trap" then
-     activateTrapAnim(col,card,function() applyResolve(card,1) end)
-    else
-     card.facedown=false
-     animSpellActivation(col,PY_S,card,1)
-    end
+    submitIntent(1,"ACTIVATE",{col=col})
    end
   end
 
  elseif key=="nextphase" then
-  changePhase(G.ph+1)
+  submitIntent(1,"ADVANCE_PHASE",{})
 
  elseif key=="endturn" then
-  changePhase(PH_END)
-  G.autoTimer=1
+  -- Jump straight to PH_END (may skip PH_BATTLE entirely). autoTimer=1
+  -- makes autoPhase fire the END→DRAW transition next frame — no end-phase
+  -- response window when the player asks to skip ahead.
+  if submitIntent(1,"ADVANCE_PHASE",{to=PH_END}) then
+   G.autoTimer=1
+  end
 
  elseif key=="oracle_e1" or key=="oracle_e2" or key=="oracle_e3" or key=="oracle_done" then
   local op=G.oraclePick; if not op then return end
@@ -249,7 +238,7 @@ function execAction(key)
       revealAndDestroyMon(opp,i,"effect")
      end
     end
-    flushTriggers()
+    checkEquips()
    elseif eff==3 then
     local opp=3-op.plr
     for i=1,3 do
@@ -268,142 +257,87 @@ function execAction(key)
    openOraclePick(op)
   end
 
- elseif key=="ss_atk" or key=="ss_def" then
-  local ps=G.pendingSS; G.pendingSS=nil
-  if ps then
-   local col=firstEmpty(G.mon[ps.plr])
-   if col then
-    local m=ps.card
-    m.pos=(key=="ss_atk") and 1 or 2
-    m.facedown=false; m.attacked=false; m.summoned=true; m.posChanged=false
-    G.mon[ps.plr][col]=m
-    fireSummonHook(m,ps.plr)
-   end
-  end
-
- elseif key=="reborn_atk" or key=="reborn_def" then
-  -- Monster Reborn: position chosen, now activate. The chain link's resolveFn
-  -- special-summons the captured GY monster at the picked position.
-  local rs=G.rebornSel; G.rebornSel=nil
-  if rs then
-   local pos=(key=="reborn_atk") and 1 or 2
-   pushActivationLink({card=rs.card,col=rs.col,zone=rs.zone,plr=1},function()
-    local emptyCol=firstEmpty(G.mon[1])
-    local m=emptyCol and G.gy[rs.gyPlr][rs.gyIdx]
-    if not (emptyCol and m and m.cat=="monster") then return end
-    table.remove(G.gy[rs.gyPlr],rs.gyIdx)
-    m.pos=pos; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
-    m.linkedTrap=nil
-    G.mon[1][emptyCol]=m
-    fireSummonHook(m,1)
-   end)
-  end
-
- elseif key=="assail_yes" then
-  -- Gravekeeper's Assailant: pick 1 opponent monster, change its battle
-  -- position, then continue the declared attack.
-  G.mode="sel_destroy"
-  G.destroySel={side=2,title="ASSAILANT: CHANGE POS",onPick=function(side,ti)
-   local m=G.mon[side][ti]
-   if m then
-    if m.facedown then
-     m.facedown=false; m.pos=1; fireMonHook(m,"onFlip",2)
-    else
-     m.pos=(m.pos==1) and 2 or 1
-    end
-    m.posChanged=true
-    checkEquips()
-   end
-   resumeAttack()
-  end}
-  G.cur={side=2,row=1,col=4-(firstOccupied(G.mon[2]) or 1)}
-
- elseif key=="assail_no" then
-  resumeAttack()
  end
 end
 
-function resolveAttack(attacker,atkCol,target,tgtIdx)
- attacker.attacked=true
- G.mode="free"; G.pending=nil
- G.cur={side=1,row=1,col=atkCol}
-
- local ax=COL[atkCol]+ZW_MAIN//2-8
- local ay=PY_M+ZH//2-8
-
- if not target then
-  local tx=FA_X+FA_W//2-8; local ty=OY_S+ZH//2-8
-  animSwordSlash(ax,ay,tx,ty,function() applyDamage(2,getMonAtk(attacker)) end)
-  return
- end
-
- local tx=COL[4-tgtIdx]+ZW_MAIN//2-8
- local ty=OY_M+ZH//2-8
+-- Battle resolution body — symmetric for both players. Called by
+-- INTENTS.DECLARE_ATTACK's continuation AFTER the EV_ATTACK chain resolves.
+-- attacker / target are card refs that have been confirmed still alive.
+-- Handles face-down flip + sword anim + ATK/DEF damage math + GY moves.
+function runAttackBattle(plr,attacker,atkCol,target,tgtCol)
+ local opp=3-plr
+ local attScrCol=(plr==1) and atkCol or (4-atkCol)
+ local tgtScrCol=(plr==1) and (4-tgtCol) or tgtCol
+ local attY=(plr==1) and PY_M or OY_M
+ local tgtY=(plr==1) and OY_M or PY_M
+ local tgtZoneColor=(plr==1) and COZ or CZ
+ local ax=COL[attScrCol]+ZW_MAIN//2-8
+ local ay=attY+ZH//2-8
+ local tx=COL[tgtScrCol]+ZW_MAIN//2-8
+ local ty=tgtY+ZH//2-8
  local wasFlipped=target.facedown
-
  local function doSlash()
   animSwordSlash(ax,ay,tx,ty,function()
    local atkV=getMonAtk(attacker); local tgtV=getMonAtk(target); local tgtDef=getMonDef(target)
+   local atkB=behaviorOf(attacker)
    if target.pos==2 then
     if atkV>tgtDef then
-     sendMonsterToGY(2,tgtIdx,"battle")
+     sendMonsterToGY(opp,tgtCol,"battle")
+     if atkB and atkB.piercing then applyDamage(opp,atkV-tgtDef) end
     elseif atkV<tgtDef then
-     changeLp(1,-(tgtDef-atkV))
+     if not battleDamageImmune(attacker,plr) then changeLp(plr,-(tgtDef-atkV)) end
     end
    else
     if atkV>tgtV then
-     sendMonsterToGY(2,tgtIdx,"battle")
-     applyDamage(2,atkV-tgtV)
+     sendMonsterToGY(opp,tgtCol,"battle")
+     applyDamage(opp,atkV-tgtV)
     elseif atkV<tgtV then
-     sendMonsterToGY(1,atkCol,"battle")
-     changeLp(1,-(tgtV-atkV))
+     if not battleIndestructible(attacker,plr) then sendMonsterToGY(plr,atkCol,"battle") end
+     if not battleDamageImmune(attacker,plr) then changeLp(plr,-(tgtV-atkV)) end
     else
-     sendMonsterToGY(2,tgtIdx,"battle")
-     sendMonsterToGY(1,atkCol,"battle")
+     sendMonsterToGY(opp,tgtCol,"battle")
+     if not battleIndestructible(attacker,plr) then sendMonsterToGY(plr,atkCol,"battle") end
     end
    end
+   G.battleAnim=nil
    checkWin()
-   flushTriggers()
-   if wasFlipped then fireMonHook(target,"onFlip",2) end
+   checkEquips()
+   if atkB and atkB.onAfterAttack and G.mon[plr][atkCol]==attacker then
+    atkB.onAfterAttack(attacker,plr,atkCol,target,tgtCol,opp)
+   end
+   if wasFlipped then flipEvent(target,opp,tgtCol) end
   end)
  end
-
  if wasFlipped then
   target.facedown=false
-  local zx=COL[4-tgtIdx]
+  local zx=COL[tgtScrCol]
   addAnim(24,function(t,f)
-   if (t//4)%2==0 then rect(zx,OY_M,ZW_MAIN,ZH,COZ); rectb(zx,OY_M,ZW_MAIN,ZH,CT) end
+   if (t//4)%2==0 then rect(zx,tgtY,ZW_MAIN,ZH,tgtZoneColor); rectb(zx,tgtY,ZW_MAIN,ZH,CT) end
   end,doSlash)
  else
   doSlash()
  end
 end
 
--- Resolve a player-declared attack: run the AI's trap window, then carry out
--- the attack on the target stored in G.pending (set when the attack was
--- confirmed). Used both for normal attacks and after Assailant's effect.
-function confirmPlayerAttack()
- local p=G.pending
- if not p then return end
- local tgtIdx=p.tgtIdx
- local function proceedAttack()
-  -- Re-check attacker (chain may have destroyed it, e.g. Mirror Force)
-  if not p.attacker or G.mon[1][p.atkCol]~=p.attacker then
-   G.mode="free"; G.pending=nil; return
+-- Direct attack body — attacker slashes the opp's S/T-row center, deals
+-- applyDamage to opp (which itself raises EV_BEFORE_DAMAGE for Kuriboh).
+function runDirectAttack(plr,attacker,atkCol)
+ local opp=3-plr
+ local attScrCol=(plr==1) and atkCol or (4-atkCol)
+ local attY=(plr==1) and PY_M or OY_M
+ local tgtY=(plr==1) and OY_S or PY_S
+ local ax=COL[attScrCol]+ZW_MAIN//2-8
+ local ay=attY+ZH//2-8
+ local tx=FA_X+FA_W//2-8
+ local ty=tgtY+ZH//2-8
+ local dmg=getMonAtk(attacker)
+ animSwordSlash(ax,ay,tx,ty,function()
+  G.battleAnim=nil
+  applyDamage(opp,dmg)
+  local b=behaviorOf(attacker)
+  if b and b.onAfterAttack and G.mon[plr][atkCol]==attacker then
+   b.onAfterAttack(attacker,plr,atkCol)
   end
-  if not hasMonsters(2) then
-   resolveAttack(p.attacker,p.atkCol,nil,nil)
-  else
-   local target=G.mon[2][tgtIdx]
-   if target then
-    resolveAttack(p.attacker,p.atkCol,target,tgtIdx)
-   end
-   -- If target is nil (cursor on empty zone), do nothing; player stays in
-   -- sel_atk and can re-navigate. Matches pre-chain behavior.
-  end
- end
- if not checkAITraps("attack",{att=p.attacker,atkCol=p.atkCol},proceedAttack) then
-  proceedAttack()
- end
+ end)
 end
 

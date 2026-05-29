@@ -20,17 +20,18 @@ function newGame()
   menu={open=false,items={},sel=1},
   mode="free",
   infoCard=nil,
+  infoScroll=0,  -- vertical line offset for the scrollable drawDBInfo description
   nameScroll={card=nil,offset=0,pause=NAME_SCROLL_PAUSE,atEnd=false},
   pending=nil,
+  popup=nil,
   normalSummoned=false,
   aiTimer=0,
   aiBattleIdx=1,
   autoTimer=50,
-  chain=nil,
-  triggerQueue=nil,  -- queued onDestroy / onSummon triggers, drained by flushTriggers()
   statsGen=1,        -- incremented by bumpStats() on any field change; invalidates per-card stat caches
  }
  ANIM={}
+ procInit()
 end
 
 -- ============================================================
@@ -64,21 +65,29 @@ end
 function drawGYView()
  local gv=G.gyView
  local gy=G.gy[gv.plr]
- rect(0,0,SW,SH,CB)
- rectb(0,0,SW,SH,CD)
+ -- Same footprint + border as the card-info popup / card picker.
+ local bx,by,bw,bh=20,10,200,116
+ rect(bx,by,bw,bh,CB)
+ rectb(bx,by,bw,bh,CD)
+ rectb(bx+1,by+1,bw-2,bh-2,CD)
+
+ -- Header: which graveyard + card count
  local title=(gv.plr==1) and "YOUR GRAVEYARD" or "OPP GRAVEYARD"
- print(title,4,3,CCR,true,1,false)
- print("("..#gy..")",SW-#tostring(#gy)*6-14,3,CT,true,1,false)
- line(0,13,SW-1,13,CD)
+ print(title,bx+4,by+4,CCR,true,1,false)
+ local cnt="("..#gy..")"
+ print(cnt,bx+bw-4-#cnt*6,by+4,CT,true,1,false)
+ line(bx+2,by+12,bx+bw-3,by+12,CD)
+
  if #gy==0 then
-  print("Empty",(SW-30)//2,SH//2-3,CT,true,1,false)
-  print("B:close",4,SH-8,CD,true,1,true)
+  print("Empty",bx+(bw-30)//2,by+bh//2-3,CT,true,1,false)
+  print("B close",bx+4,by+bh-8,CLEG,true,1,true)
   return
  end
- local listX=4
- local listY=15
- local rowH=10
- local maxVis=9
+
+ -- Scrollable list (most-recent on top): number + name (+ ATK or SPELL/TRAP)
+ local listX,listY,rowH,nameX,atkX=bx+4,by+15,10,bx+18,bx+bw-52
+ local botDiv=by+bh-19
+ local maxVis=math.floor((botDiv-listY)/rowH)
  local dispSel=#gy-gv.sel+1
  local scrollTop=math.max(1,math.min(dispSel-maxVis//2,math.max(1,#gy-maxVis+1)))
  for row=1,maxVis do
@@ -88,46 +97,59 @@ function drawGYView()
   local card=gy[cardIdx]
   local iy=listY+(row-1)*rowH
   local isSel=(cardIdx==gv.sel)
-  if isSel then rect(0,iy-1,SW,9,CHL) end
+  if isSel then rect(bx+2,iy-1,bw-4,9,CHL) end
   local tc=isSel and CB or CT
-  print(dispIdx..".",listX,iy,isSel and CB or CD,true,1,false)
-  print(string.sub(card.name or "?",1,22),listX+14,iy,tc,true,1,false)
+  local dc=isSel and CB or CD
+  print(dispIdx..".",listX,iy,dc,true,1,false)
+  print(string.sub(card.name or "?",1,card.cat=="monster" and 21 or 24),nameX,iy,tc,true,1,false)
   if card.cat=="spell" then
-   print("SPELL",SW-38,iy,isSel and CB or CSP,true,1,false)
+   print("SPELL",bx+bw-34,iy,isSel and CB or CSP,true,1,false)
   elseif card.cat=="trap" then
-   print("TRAP",SW-32,iy,isSel and CB or CTR,true,1,false)
+   print("TRAP",bx+bw-28,iy,isSel and CB or CTR,true,1,false)
   elseif card.atk then
-   print("ATK "..card.atk,SW-52,iy,isSel and CB or CD,true,1,false)
+   print("ATK "..card.atk,atkX,iy,dc,true,1,false)
   end
  end
+ -- Scrollbar
  if #gy>maxVis then
   local barH=maxVis*rowH
   local pct=(scrollTop-1)/math.max(1,#gy-maxVis)
   local markY=listY+math.floor(pct*(barH-4))
-  rect(SW-4,listY,3,barH,CB)
-  rect(SW-4,markY,3,4,CD)
+  rect(bx+bw-4,listY,2,barH,CB); rect(bx+bw-4,markY,2,4,CD)
  end
+
+ -- Bottom: compact stats for the highlighted card (no description; X = info)
+ line(bx+2,botDiv,bx+bw-3,botDiv,CD)
  local sel=gy[gv.sel]
- line(0,SH-28,SW-1,SH-28,CD)
  if sel then
   if sel.cat=="monster" then
-   print("ATK:"..sel.atk.."  DEF:"..sel.def.."  LV:"..sel.lvl,listX,SH-24,CT,true,1,false)
-  end
-  if sel.desc then
-   print(string.sub(sel.desc,1,math.floor((SW-8)/4)),listX,SH-16,CD,true,1,true)
+   print("ATK:"..(sel.atk or 0).."  DEF:"..(sel.def or 0).."  LV:"..(sel.lvl or 0),bx+4,by+bh-16,CT,true,1,false)
+  else
+   print(((sel.cat or ""):upper()).." - "..((sel.subtype or "normal"):upper()),bx+4,by+bh-16,CT,true,1,false)
   end
  end
- print("UP/DN: browse     B: close",listX,SH-8,CD,true,1,true)
+ print("UP/DN browse   B close   X info",bx+4,by+bh-8,CLEG,true,1,true)
 end
 
 function drawDeckSelect()
  local ds=G.deckSel
- rect(0,0,SW,SH,CB)
- rectb(0,0,SW,SH,CD)
- print(ds.title,4,3,CCR,true,1,true)
- print("("..#ds.items..")",SW-#tostring(#ds.items)*6-14,3,CT,true,1,false)
- line(0,13,SW-1,13,CD)
- local listX,listY,rowH,maxVis=4,15,10,9
+ -- Same footprint + border as the card-info popup (drawDBInfo): a centered
+ -- 200x116 box, so the field shows around the edges while picking.
+ local bx,by,bw,bh=20,10,200,116
+ rect(bx,by,bw,bh,CB)
+ rectb(bx,by,bw,bh,CD)
+ rectb(bx+1,by+1,bw-2,bh-2,CD)
+
+ -- Header: calling card's name (left) + available count (right)
+ print(string.sub(ds.title or "?",1,26),bx+4,by+4,CCR,true,1,false)
+ local cnt="("..#ds.items..")"
+ print(cnt,bx+bw-4-#cnt*6,by+4,CT,true,1,false)
+ line(bx+2,by+12,bx+bw-3,by+12,CD)
+
+ -- Scrollable list: number + name (+ right-aligned ATK)
+ local listX,listY,rowH,nameX,atkX=bx+4,by+15,10,bx+18,bx+bw-52
+ local botDiv=by+bh-19
+ local maxVis=math.floor((botDiv-listY)/rowH)
  local scrollTop=math.max(1,math.min(ds.sel-maxVis//2,math.max(1,#ds.items-maxVis+1)))
  for row=1,maxVis do
   local idx=scrollTop+row-1
@@ -135,27 +157,33 @@ function drawDeckSelect()
   local item=ds.items[idx]
   local iy=listY+(row-1)*rowH
   local isSel=(idx==ds.sel)
-  if isSel then rect(0,iy-1,SW,9,CHL) end
+  if isSel then rect(bx+2,iy-1,bw-4,9,CHL) end
   local tc=isSel and CB or CT
-  print(idx..".",listX,iy,isSel and CB or CD,true,1,false)
-  print(string.sub(item.name or "?",1,18),listX+14,iy,tc,true,1,false)
-  if item.atk then print("ATK "..item.atk,SW-52,iy,isSel and CB or CD,true,1,false) end
+  local dc=isSel and CB or CD
+  print(idx..".",listX,iy,dc,true,1,false)
+  print(string.sub(item.name or "?",1,item.atk and 21 or 28),nameX,iy,tc,true,1,false)
+  if item.atk then print("ATK "..item.atk,atkX,iy,dc,true,1,false) end
  end
+ -- Scrollbar
  if #ds.items>maxVis then
   local barH=maxVis*rowH
   local pct=(scrollTop-1)/math.max(1,#ds.items-maxVis)
   local markY=listY+math.floor(pct*(barH-4))
-  rect(SW-4,listY,3,barH,CB); rect(SW-4,markY,3,4,CD)
+  rect(bx+bw-4,listY,2,barH,CB); rect(bx+bw-4,markY,2,4,CD)
  end
- local sel=ds.items[ds.sel]
- line(0,SH-28,SW-1,SH-28,CD)
- if sel then
-  if sel.atk then print("ATK:"..sel.atk.."  DEF:"..(sel.def or 0).."  LV:"..(sel.lvl or 0),listX,SH-24,CT,true,1,false) end
-  if sel.desc then
-   print(string.sub(sel.desc,1,math.floor((SW-8)/4)),listX,SH-16,CD,true,1,true)
+
+ -- Bottom: compact stats for the highlighted card. No description here --
+ -- press X to open the full scrollable card info.
+ line(bx+2,botDiv,bx+bw-3,botDiv,CD)
+ local sc=ds.items[ds.sel] and ds.items[ds.sel].card
+ if sc then
+  if sc.cat=="monster" then
+   print("ATK:"..(sc.atk or 0).."  DEF:"..(sc.def or 0).."  LV:"..(sc.lvl or 0),bx+4,by+bh-16,CT,true,1,false)
+  else
+   print(((sc.cat or ""):upper()).." - "..((sc.subtype or "normal"):upper()),bx+4,by+bh-16,CT,true,1,false)
   end
  end
- print("UP/DN: browse     A: pick",listX,SH-8,CD,true,1,true)
+ print("UP/DN browse   A pick   X info",bx+4,by+bh-8,CLEG,true,1,true)
 end
 
 function handleDeckSelectInput()
@@ -165,6 +193,9 @@ function handleDeckSelectInput()
  elseif btnp(4) then
   local item=ds.items[ds.sel]
   if item then G.mode="free"; G.deckSel=nil; ds.onPick(item.deckIdx,item) end
+ elseif btnp(6) then
+  local item=ds.items[ds.sel]
+  if item and item.card then G.infoCard=item.card end
  end
 end
 
@@ -214,11 +245,6 @@ function animDrawCard(p)
  end)
 end
 
-function changePhase(ph)
- if ph==PH_BATTLE and G.turn==1 and G.active==G.firstPlayer then ph=PH_END end
- G.ph=ph
-end
-
 function addAnim(frames,fn,onDone)
  table.insert(ANIM,{frames=frames,t=frames,fn=fn,onDone=onDone})
 end
@@ -263,9 +289,8 @@ end
 -- Monster counterpart: if face-down, reveal it before destroying so the player
 -- sees what is being removed. For face-up monsters this is equivalent to
 -- sendMonsterToGY (which already calls destroyFlash for destruction reasons).
--- The reveal path defers sendMonsterToGY + flushTriggers into the flash's
--- onDone — meaning onDestroy triggers for revealed face-down monsters fire
--- after the reveal animation, not in lockstep with face-up destructions.
+-- For revealed face-down monsters the GY move + EV_DESTROYED raise happen
+-- inside the flash's onDone, so listeners fire after the reveal animation.
 function revealAndDestroyMon(plr,col,reason)
  local m=G.mon[plr][col]
  if not m then return end
@@ -273,7 +298,7 @@ function revealAndDestroyMon(plr,col,reason)
   m.facedown=false
   local zx,zy=monZoneXY(plr,col)
   addAnim(24,function(t,f) if t//4%2==0 then rect(zx,zy,ZW_MAIN,ZH,CCR) end end,
-   function() sendMonsterToGY(plr,col,reason); flushTriggers() end)
+   function() sendMonsterToGY(plr,col,reason); checkEquips() end)
   return
  end
  sendMonsterToGY(plr,col,reason)
@@ -285,33 +310,37 @@ function changeLp(plr,delta)
  checkWin()
 end
 
--- Apply battle damage. If a card in `plr`'s hand has a `handTrap` behavior
--- (e.g. Kuriboh), it's offered first (player) or auto-used (AI).
+-- Apply battle damage. Raises EV_BEFORE_DMG so hand-traps (Kuriboh via
+-- listens.BEFORE_DAMAGE) can mutate ctx.negated to cancel the damage.
 function applyDamage(plr,dmg)
  if dmg<=0 then return end
- for i,card in ipairs(G.hand[plr]) do
-  local b=behaviorOf(card)
-  if b and b.handTrap then b.handTrap(plr,dmg,i,card); return end
- end
- changeLp(plr,-dmg)
+ -- Push-then-raiseNow: the changeLp continuation goes on the proc stack
+ -- BEFORE EV_BEFORE_DMG is raised, so hand-traps (Kuriboh) can mutate
+ -- ctx.negated during the chain to cancel the damage.
+ local ctx={plr=plr,dmg=dmg,actor=3-plr,negated=false}
+ procPushFrame(function()
+  if not ctx.negated then changeLp(plr,-ctx.dmg) end
+ end)
+ raiseNow(EV_BEFORE_DMG,ctx)
 end
 
 -- ============================================================
 -- CARD MOVEMENT  (single source of truth for moving cards)
 -- ============================================================
 -- All field/hand -> GY movement must go through these helpers so that
--- destroyFlash fires consistently, onDestroy triggers are queued (via
--- queueTrigger, in ygo_chain), and linkedTrap/linkedMon back-pointers are
--- cleared. `reason` is a free-form tag: "battle", "effect", "cost",
--- "tribute", "rule" (self-destruct). Only DESTROY_REASONS tags fire onDestroy
--- triggers (PSCT "by battle/effect" vs non-destruction "tribute"/"cost").
+-- destroyFlash fires consistently, EV_DESTROYED is raised, and linkedTrap/
+-- linkedMon back-pointers are cleared. `reason` is a free-form tag:
+-- "battle", "effect", "cost", "tribute", "rule" (self-destruct). Only
+-- DESTROY_REASONS tags raise EV_DESTROYED (PSCT "by battle/effect" vs
+-- non-destruction "tribute"/"cost").
 
 function sendMonsterToGY(plr,col,reason)
  local m=G.mon[plr][col]
  if not m then return nil end
  G.mon[plr][col]=nil
  bumpStats()
- table.insert(G.gy[plr],m)
+ -- Tokens vanish on leaving the field (real YGO ruling).
+ if not m.isToken then table.insert(G.gy[plr],m) end
  if DESTROY_REASONS[reason] then
   local zx,zy=monZoneXY(plr,col)
   destroyFlash(zx,zy)
@@ -324,7 +353,7 @@ function sendMonsterToGY(plr,col,reason)
    if G.st[p][c]==m.linkedTrap then sendSpellTrapToGY(p,c,"rule") end
   end end
  end
- queueTrigger(m,plr,reason)
+ destroyEvent(m,plr,reason)
  return m
 end
 
@@ -336,6 +365,38 @@ function sendSpellTrapToGY(plr,col,reason)
  if c.linkedMon then c.linkedMon.linkedTrap=nil; c.linkedMon=nil end
  table.insert(G.gy[plr],c)
  return c
+end
+
+-- Return an S/T card to its controller's hand (Giant Trunade etc.). Severs
+-- linkedMon back-pointer and equip target. CoH-style: if a linked monster
+-- exists, it's destroyed (the anchor is leaving the field). G.st[plr][col]
+-- is cleared BEFORE the cascade so sendMonsterToGY's linkedTrap-destruction
+-- branch doesn't find this card and route it to GY instead of hand.
+function returnSTToHand(plr,col)
+ local c=G.st[plr][col]
+ if not c then return nil end
+ G.st[plr][col]=nil
+ bumpStats()
+ if c.linkedMon then
+  local m=c.linkedMon
+  m.linkedTrap=nil; c.linkedMon=nil
+  for mp=1,2 do for mc=1,3 do
+   if G.mon[mp][mc]==m then sendMonsterToGY(mp,mc,"effect") end
+  end end
+ end
+ c.facedown=false; c.setThisTurn=false
+ if c.subtype=="equip" then c.equippedTo=nil end
+ table.insert(G.hand[plr],c)
+ return c
+end
+
+function returnFSToHand(plr)
+ local f=G.fs[plr]
+ if not f then return nil end
+ G.fs[plr]=nil
+ bumpStats()
+ table.insert(G.hand[plr],f)
+ return f
 end
 
 function discardFromHand(plr,handIdx,reason)
@@ -352,11 +413,16 @@ function addToGY(plr,card,reason)
  bumpStats()
 end
 
--- Move a player's field spell from the FS zone to their GY (e.g. replaced by
--- a new field spell, or destroyed).
-function sendFieldSpellToGY(plr,reason)
+-- Move a player's field spell from the FS zone to their GY (replaced, or
+-- destroyed). `actor` (optional) is the side doing the destroying. Opp-effect
+-- destruction is refused while the controller has gkshaman+Necrovalley
+-- (staticActive blocksFieldSpells). Self-destroy and "rule" replacement pass.
+function sendFieldSpellToGY(plr,reason,actor)
  local f=G.fs[plr]
  if not f then return nil end
+ if reason=="effect" and actor and actor~=plr and staticActive("blocksFieldSpells",plr) then
+  return nil
+ end
  G.fs[plr]=nil
  bumpStats()
  table.insert(G.gy[plr],f)

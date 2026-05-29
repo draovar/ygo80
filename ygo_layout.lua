@@ -67,6 +67,7 @@ PY_H =109  -- plr hand      h=PHH=22  ends y=130
 CB   = 0   -- screen background, LP bar bg              (black)
 CD   = 15  -- divider lines, panel borders              (white)
 CT   = 15  -- general text                              (white)
+CLEG = 7   -- control-hint / legend text                (grey)
 CHL  = 7   -- UI row highlight, phase-bar bg, buttons   (grey)
 -- Field zones
 CZ   = 7   -- player zone tiles                         (grey)

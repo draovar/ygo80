@@ -10,20 +10,54 @@ end
 
 function makeCard(id)
  local d=CARDS[id]
- return {name=d.name,atk=d.atk,def=d.def,lvl=d.lvl,pos=1,spr=d.spr,bg=d.bg,
+ return {name=d.name,atk=d.atk,def=d.def,lvl=d.lvl,pos=1,spr=d.spr,
          cat=d.cat or "monster",attr=d.attr,type=d.type,subtype=d.subtype,effect=d.effect,desc=d.desc}
 end
 
+-- Build a token monster card (no CARDS entry — token-creating spells call
+-- this directly). `isToken=true` makes sendMonsterToGY skip the GY insert so
+-- tokens vanish on destruction (real YGO ruling).
+function makeToken(name,mtype,attr,lvl,atk,def,spr)
+ return {name=name,cat="monster",type=mtype,attr=attr,lvl=lvl,
+         atk=atk,def=def,spr=spr,
+         pos=1,facedown=false,attacked=false,summoned=false,posChanged=false,
+         isToken=true}
+end
+
+-- Greedy word-wrap `text` into a list of lines each fitting within `maxW` px
+-- (small font, 4px/char). Words longer than a line are hard-broken. Shared by
+-- printWrap and the scrollable description view in drawDBInfo.
+function wrapLines(text,maxW)
+ local chW=4; local maxCh=math.floor(maxW/chW)
+ local lines={}
+ text=text or ""
+ -- Honor explicit "\n" line breaks: split into paragraphs first, then greedily
+ -- word-wrap each. Appending "\n" makes gmatch yield the final segment even
+ -- when the text doesn't end in a newline. Text with no "\n" = one paragraph,
+ -- wrapped exactly as before (backward compatible).
+ for para in (text.."\n"):gmatch("(.-)\n") do
+  if #para==0 then
+   lines[#lines+1]=""   -- preserve blank lines
+  else
+   while #para>0 do
+    if #para<=maxCh then lines[#lines+1]=para; break end
+    local cut=maxCh
+    while cut>1 and para:sub(cut,cut)~=" " do cut=cut-1 end
+    if cut<=1 then cut=maxCh end
+    lines[#lines+1]=para:sub(1,cut)
+    para=para:sub(cut+1)
+   end
+  end
+ end
+ return lines
+end
+
 function printWrap(text,x,y,maxW,col,maxY)
- local chW=4; local lineH=7; local maxCh=math.floor(maxW/chW)
- while #text>0 do
+ local lineH=7
+ for _,ln in ipairs(wrapLines(text,maxW)) do
   if maxY and y+lineH>maxY then return y end
-  if #text<=maxCh then print(text,x,y,col,true,1,true); return y+lineH end
-  local cut=maxCh
-  while cut>1 and text:sub(cut,cut)~=" " do cut=cut-1 end
-  if cut<=1 then cut=maxCh end
-  print(text:sub(1,cut),x,y,col,true,1,true)
-  text=text:sub(cut+1); y=y+lineH
+  print(ln,x,y,col,true,1,true)
+  y=y+lineH
  end
  return y
 end
@@ -31,6 +65,31 @@ end
 -- Tributes required to normal-summon a monster of given level
 function tribsNeeded(lvl)
  return (lvl<=4) and 0 or (lvl<=6) and 1 or (lvl<=8) and 2 or 3
+end
+
+-- Turn-scoped stat mods. card.turnMods = {atk=N, def=N, lvl=N}; cleared at
+-- end of turn (PH_END.onExit -> clearTurnMods). Use for any "until end of
+-- turn" effect (Cost Down: lvl, future ATK/DEF boosts).
+function turnMod(card,key)
+ return (card.turnMods and card.turnMods[key]) or 0
+end
+
+function addTurnMod(card,key,delta)
+ card.turnMods=card.turnMods or {}
+ card.turnMods[key]=(card.turnMods[key] or 0)+delta
+end
+
+function getMonLvl(card)
+ return math.max(1,(card.lvl or 0)+turnMod(card,"lvl"))
+end
+
+function clearTurnMods()
+ local function clear(c) if c then c.turnMods=nil end end
+ for p=1,2 do
+  for i=1,3 do clear(G.mon[p][i]) end
+  for _,c in ipairs(G.hand[p]) do clear(c) end
+  for _,c in ipairs(G.gy[p])   do clear(c) end
+ end
 end
 
 -- Tribute worth of monster `m` toward summoning `summonCard`. Defaults to 1;
@@ -136,8 +195,9 @@ function getMonAtk(card)
  local b=behaviorOf(card)
  if b and b.atkBonus then bonus=b.atkBonus(card) end
  local ab,_=getEquipBonus(card)
- local nv=(isGravekeeper(card) and necrovalleyActive()) and 500 or 0
- return math.max(0, card.atk+bonus+ab+nv+(card.atkMod or 0))
+ local nv=(isGravekeeper(card) and staticActive("necrovalley")) and 500 or 0
+ local sg=(staticActive("sogen") and (card.type=="warrior" or card.type=="beast-warrior")) and 400 or 0
+ return math.max(0, card.atk+bonus+ab+nv+sg+(card.atkMod or 0)+turnMod(card,"atk"))
 end
 
 -- Returns effective DEF (see getMonAtk; card.defMod is the effect-modifier term).
@@ -146,8 +206,9 @@ function getMonDef(card)
  local b=behaviorOf(card)
  if b and b.defBonus then bonus=b.defBonus(card) end
  local _,db=getEquipBonus(card)
- local nv=(isGravekeeper(card) and necrovalleyActive()) and 500 or 0
- return math.max(0, card.def+bonus+db+nv+(card.defMod or 0))
+ local nv=(isGravekeeper(card) and staticActive("necrovalley")) and 500 or 0
+ local sg=(staticActive("sogen") and (card.type=="warrior" or card.type=="beast-warrior")) and 400 or 0
+ return math.max(0, card.def+bonus+db+nv+sg+(card.defMod or 0)+turnMod(card,"def"))
 end
 
 -- Destroys any face-up equip cards whose target is gone or face-down.

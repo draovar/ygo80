@@ -34,6 +34,7 @@ function handleRPSInput()
    else
     G.active=RPS.winner; G.firstPlayer=RPS.winner
     if RPS.winner==2 then G.aiTimer=AI_DELAY end
+    music(0,-1,-1,true,true)
     TRANS={t=0}
     SCENE="trans"
    end

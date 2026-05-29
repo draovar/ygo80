@@ -23,7 +23,7 @@ function drawCardAtk(x,y,card,zc)
  local fc=card.effect and CME or CCA
  rect(x,y,ZW_MAIN,ZH,zc)
  rect(x+2,y+1,ZW_MAIN-4,ZH-2,fc)
- if card.spr then spr(card.spr,x+3,y+2,card.bg,1,0,0,2,2) end
+ if card.spr then spr(card.spr,x+3,y+2,-1,1,0,0,2,2) end
  clip(x+1,y,ZW_MAIN-2,ZH)
  spr(SPR_FRAME,x+1,y,15,1,0,0,3,3)
  clip()
@@ -34,7 +34,7 @@ function drawCardDef(x,y,card,zc)
  local fc=card.effect and CME or CCA
  rect(x,y,ZW_MAIN,ZH,zc)
  rect(x+1,y+2,ZW_MAIN-2,ZH-4,fc)
- if card.spr then spr(card.spr,x+4,y+3,card.bg,1,0,1,2,2) end
+ if card.spr then spr(card.spr,x+4,y+3,-1,1,0,1,2,2) end
  clip(x,y+1,ZW_MAIN,ZH-2)
  spr(SPR_FRAME,x-2,y+1,15,1,0,1,3,3)
  clip()
@@ -45,7 +45,7 @@ function drawCardSpell(x,y,card,zc)
  local c=(card.cat=="trap") and CTR or CSP
  rect(x,y,ZW_MAIN,ZH,zc)
  rect(x+2,y+1,ZW_MAIN-4,ZH-2,c)
- if card.spr then spr(card.spr,x+3,y+2,card.bg,1,0,0,2,2) end
+ if card.spr then spr(card.spr,x+3,y+2,-1,1,0,0,2,2) end
  clip(x+1,y,ZW_MAIN-2,ZH)
  spr(SPR_FRAME,x+1,y,15,1,0,0,3,3)
  clip()
@@ -71,7 +71,7 @@ function drawHandPlr(x,y,card)
   fc=card.effect and CME or CCA
  end
  rect(x+1,y+1,HW-2,PHH-2,fc)
- if card.spr then spr(card.spr,x+2,y+2,card.bg,1,0,0,2,2) end
+ if card.spr then spr(card.spr,x+2,y+2,-1,1,0,0,2,2) end
  clip(x,y,HW,PHH)
  spr(SPR_FRAME,x,y,15,1,0,0,3,3)
  clip()
@@ -121,7 +121,7 @@ function drawFieldSpellSlot(x,y,card)
  else
   rect(x,y,ZW_SPEC,ZH,CFS)
   rect(x+2,y+1,ZW_SPEC-4,ZH-2,CSP)
-  if card.spr then spr(card.spr,x+2,y+2,card.bg,1,0,0,2,2) end
+  if card.spr then spr(card.spr,x+2,y+2,-1,1,0,0,2,2) end
   rectb(x,y,ZW_SPEC,ZH,CD)
  end
 end
@@ -185,7 +185,10 @@ function drawPlrSide()
  for c=1,3 do
   local zc
   local isTrib=false
-  if G.mode=="sel_tribute" and G.pending then
+  -- isTrib: this col is in G.pending.tributes (relevant for sel_tribute and
+  -- sel_mon both -- in sel_mon the tributed zones count as valid destinations
+  -- because the SUMMON intent vacates them atomically with placement).
+  if (G.mode=="sel_tribute" or G.mode=="sel_mon") and G.pending and G.pending.tributes then
    for _,t in ipairs(G.pending.tributes) do
     if t==c then isTrib=true; break end
    end
@@ -195,7 +198,7 @@ function drawPlrSide()
   drawFieldSlot(COL[c],PY_M,card,card and card.facedown,zc)
   if G.mode=="sel_tribute" and G.mon[1][c] and not isTrib then
    drawDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
-  elseif G.mode=="sel_mon" and not G.mon[1][c] then
+  elseif G.mode=="sel_mon" and (not G.mon[1][c] or isTrib) then
    drawDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
   elseif G.mode=="sel_destroy" and G.mon[1][c] and (not G.destroySel.side or G.destroySel.side==1) then
    drawDotBorder(COL[c],PY_M,ZW_MAIN,ZH)
@@ -218,9 +221,6 @@ function drawPlrSide()
    print(tostring(card.swordsCounter),COL[c]+ZW_MAIN-7,PY_S+2,CCR,true,1,false)
   end
   if G.mode=="sel_st" and not card then drawDotBorder(COL[c],PY_S,ZW_MAIN,ZH) end
-  if G.mode=="opp_trap_select" and G.trapSelect and trapCanRespond(card,G.trapSelect.event,G.trapSelect.ctx,1) then
-   drawDotBorder(COL[c],PY_S,ZW_MAIN,ZH)
-  end
  end
  drawZone(COL[4],PY_S,ZW_SPEC,ZH,CDK,"DK",#G.deck[1])
 
@@ -228,6 +228,35 @@ function drawPlrSide()
  for i=0,ph-1 do
   drawHandPlr(handX(ph,i),PY_H,G.hand[1][i+1])
  end
+end
+
+-- Coin / dice popup overlay. Centered over the game field. Driven by
+-- G.popup={type="coin"|"dice", result, t, frames[, displayed]}; set by
+-- procRouteChoice's coin/dice handler, cleared by its onDone callback.
+function drawPopup()
+ local p=G.popup
+ if not p then return end
+ local cx=FA_X+FA_W//2
+ local cy=SH//2
+ local w,h=56,56
+ local bx,by=cx-w//2,cy-h//2
+ rect(bx,by,w,h,CB); rectb(bx,by,w,h,CT)
+ local label=(p.type=="coin") and "COIN FLIP" or "DICE ROLL"
+ print(label,cx-#label*2,by+4,CT,true,1,true)
+ local elapsed=(p.frames or 180)-(p.t or 180)
+ local settled=elapsed>=60
+ local sprId
+ if p.type=="coin" then
+  if settled then sprId=(p.result==1) and 61 or 60
+  else sprId=44+(elapsed//3)%4 end
+ else
+  if settled then sprId=69+p.result
+  else sprId=69+(p.displayed or p.result) end
+ end
+ -- 3x scale = 24x24 px
+ local sx=cx-12
+ local sy=by+18
+ spr(sprId,sx,sy,0,3,0,0,1,1)
 end
 
 -- Cursor overlay
@@ -309,11 +338,11 @@ function drawPanel()
   if attrSpr then spr(attrSpr,PANEL_W-10,10,0,1,0,0,1,1) end
   -- Level stars (monster only), 1px gap between
   if card.cat=="monster" and card.lvl then
-   for i=1,card.lvl do spr(SPR_STAR,2+(i-1)*6,18,0,1,0,0,1,1) end
+   for i=1,getMonLvl(card) do spr(SPR_STAR,2+(i-1)*6,18,0,1,0,0,1,1) end
   end
   -- Portrait 32x32 (spell/trap shift up since there are no stars above)
   local artY=(card.cat=="monster") and 24 or 21
-  if card.spr then spr(card.spr,2,artY,card.bg,2,0,0,2,2) end
+  if card.spr then spr(card.spr,2,artY,-1,2,0,0,2,2) end
   -- Right pane: stats (monster) or subtype icon+label (spell/trap)
   if card.cat=="monster" then
    local onField=(c.row==1)
@@ -369,17 +398,6 @@ function drawPanel()
   print("SET ZONE",2,71,CLP,true,1,true)
   print("A: place",2,79,CD,true,1,true)
   print("B: cancel",2,86,CD,true,1,true)
- elseif G.mode=="trap_ask" and G.trapAsk then
-  print("ACTIVATE?",2,71,CTR,true,1,true)
-  print(string.sub(G.trapAsk.card.name,1,20),2,79,CT,true,1,true)
-  print("A: yes",2,87,CD,true,1,true)
-  print("B: no",2,94,CD,true,1,true)
- elseif G.mode=="opp_trap_select" then
-  print("ACTIVATE TRAP?",2,71,CTR,true,1,true)
-  local sel=G.st[1][G.cur.col]
-  if sel and sel.facedown then print(string.sub(sel.name,1,20),2,79,CT,true,1,true) end
-  print("A: activate",2,87,CD,true,1,true)
-  print("B: pass",2,94,CD,true,1,true)
  elseif G.mode=="free" and card and not facedown then
   local tLabel,tCol=cardTypeInfo(card)
   print(tLabel,2,71,tCol,true,1,true)
