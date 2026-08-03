@@ -1,5 +1,7 @@
 -- [ygo_render] YGO80 module -- loaded via require() from ygo80.lua
 
+DEBUG_OPP_HAND=true
+
 -- ============================================================
 -- DRAW PRIMITIVES
 -- ============================================================
@@ -20,7 +22,7 @@ end
 
 -- Attack position: card upright, portrait 20x22 inside 22x22 (1px left/right margin)
 function drawCardAtk(x,y,card,zc)
- local fc=card.effect and CME or CCA
+ local fc=(card.subtype=="fusion" and CFU) or (card.effect and CME) or CCA
  rect(x,y,ZW_MAIN,ZH,zc)
  rect(x+2,y+1,ZW_MAIN-4,ZH-2,fc)
  if card.spr then spr(card.spr,x+3,y+2,-1,1,0,0,2,2) end
@@ -31,7 +33,7 @@ end
 
 -- Defense position: card sideways, landscape 22x20 inside 22x22 (1px top/bottom margin)
 function drawCardDef(x,y,card,zc)
- local fc=card.effect and CME or CCA
+ local fc=(card.subtype=="fusion" and CFU) or (card.effect and CME) or CCA
  rect(x,y,ZW_MAIN,ZH,zc)
  rect(x+1,y+2,ZW_MAIN-2,ZH-4,fc)
  if card.spr then spr(card.spr,x+4,y+3,-1,1,0,1,2,2) end
@@ -68,11 +70,30 @@ function drawHandPlr(x,y,card)
  if card.cat=="spell" or card.cat=="trap" then
   fc=card.cat=="spell" and CSP or CTR
  else
-  fc=card.effect and CME or CCA
+  fc=(card.subtype=="fusion" and CFU) or (card.effect and CME) or CCA
  end
  rect(x+1,y+1,HW-2,PHH-2,fc)
  if card.spr then spr(card.spr,x+2,y+2,-1,1,0,0,2,2) end
  clip(x,y,HW,PHH)
+ spr(SPR_FRAME,x,y,15,1,0,0,3,3)
+ clip()
+end
+
+-- Debug: opp hand card face-up at OHH (half height, top half of sprite)
+function drawHandOppDebug(x,y,card)
+ local fc
+ if card.cat=="spell" or card.cat=="trap" then
+  fc=card.cat=="spell" and CSP or CTR
+ else
+  fc=(card.subtype=="fusion" and CFU) or (card.effect and CME) or CCA
+ end
+ rect(x+1,y+1,HW-2,OHH-2,fc)
+ if card.spr then
+  clip(x+2,y+1,HW-4,OHH-2)
+  spr(card.spr,x+2,y+2,-1,1,0,0,2,2)
+  clip()
+ end
+ clip(x,y,HW,OHH)
  spr(SPR_FRAME,x,y,15,1,0,0,3,3)
  clip()
 end
@@ -150,7 +171,11 @@ end
 function drawOppSide()
  local oh=math.min(#G.hand[2],MAX_HAND)
  for i=0,oh-1 do
-  drawCardBack(handX(oh,i),OY_H,HW,OHH,0,0,-11)
+  if DEBUG_OPP_HAND then
+   drawHandOppDebug(handX(oh,i),OY_H,G.hand[2][i+1])
+  else
+   drawCardBack(handX(oh,i),OY_H,HW,OHH,0,0,-11)
+  end
  end
 
  drawZone(COL[0],OY_S,ZW_SPEC,ZH,CDK,"DK",#G.deck[2])
@@ -161,7 +186,7 @@ function drawOppSide()
    print(tostring(card.swordsCounter),COL[c]+ZW_MAIN-7,OY_S+2,CCR,true,1,false)
   end
  end
- drawZone(COL[4],OY_S,ZW_SPEC,ZH,CED,"ED")
+ drawZone(COL[4],OY_S,ZW_SPEC,ZH,CED,"ED",#G.extra[2])
 
  drawZone(COL[0],OY_M,ZW_SPEC,ZH,CGY,"GY",#G.gy[2])
  for c=1,3 do
@@ -213,7 +238,7 @@ function drawPlrSide()
  end
  drawZone(COL[4],PY_M,ZW_SPEC,ZH,CGY,"GY",#G.gy[1])
 
- drawZone(COL[0],PY_S,ZW_SPEC,ZH,CED,"ED")
+ drawZone(COL[0],PY_S,ZW_SPEC,ZH,CED,"ED",#G.extra[1])
  for c=1,3 do
   local card=G.st[1][c]
   drawFieldSlot(COL[c],PY_S,card,card and card.facedown,CZ)
@@ -296,13 +321,14 @@ function drawPanel()
  -- Hovered card info
  local c=G.cur
  local card=getHoveredCard()
- local facedown=(c.side==2 and c.row==3)
- if c.side==2 and card and card.facedown then facedown=true end
+ local facedown=(c.side==2 and c.row==3) and not DEBUG_OPP_HAND
+ if c.side==2 and card and card.facedown and not DEBUG_OPP_HAND then facedown=true end
 
  -- Card type label + color (used in name/type/desc)
  local function cardTypeInfo(cd)
   if cd.cat=="spell" then return "SPELL",CSP end
   if cd.cat=="trap"  then return "TRAP",CTR end
+  if cd.subtype=="fusion" then return "FUSION MONSTER",CFU end
   if cd.effect then return "EFFECT MONSTER",CME end
   return "NORMAL MONSTER",CCA
  end

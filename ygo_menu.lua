@@ -14,17 +14,6 @@ function startMonsterPlacement(handIdx,action)
  end
 end
 
--- Opens the sequential Oracle effect picker. `op` holds pick state.
-function openOraclePick(op)
- local items={}
- if not op.used[1] then items[#items+1]={"+"..op.lvlSum*100 .." ATK","oracle_e1"} end
- if not op.used[2] then items[#items+1]={"DESTROY SET MONS","oracle_e2"} end
- if not op.used[3] then items[#items+1]={"OPP -2000 ATK/DEF","oracle_e3"} end
- items[#items+1]={"DONE","oracle_done"}
- G.oraclePick=op
- G.menu={open=true,sel=1,items=items}
-end
-
 -- Build context-sensitive menu items for the current cursor position.
 -- Returns a list of {label, actionKey} or nil if no menu should open.
 function buildMenu()
@@ -44,7 +33,7 @@ function buildMenu()
      if card.subtype=="equip" then
       canActivate = emptyZone and (hasMonsters(1) or hasMonsters(2))
      elseif b and b.canActivate then
-      canActivate = emptyZone and b.canActivate(card)
+      canActivate = emptyZone and b.canActivate(card,1)
      else
       canActivate = true
      end
@@ -76,6 +65,13 @@ function buildMenu()
       table.insert(items,{"EXTRA SUMMON","summon_extra"})
      end
     end
+    -- Hand-ignition (Thunder Dragon discard-search etc.)
+    if card.cat=="monster" then
+     local b=behaviorOf(card)
+     if b and b.handIgnition and (not b.handIgnition.canActivate or b.handIgnition.canActivate(card,1)) then
+      table.insert(items,{b.handIgnition.label,"hand_ignition"})
+     end
+    end
    end
 
   elseif c.row==1 and c.col>=1 and c.col<=3 then  -- monster zone
@@ -102,24 +98,37 @@ function buildMenu()
    -- already-active continuous/equip card and must not be re-activated.
    if card and card.facedown and not card.setThisTurn then
     local b=behaviorOf(card)
-    if card.cat=="spell" and isMain then
+    if card.cat=="spell" and (isMain or card.subtype=="quickplay") then
      local canActivate
      if card.subtype=="equip" then
       canActivate = hasMonsters(1) or hasMonsters(2)
      elseif b and b.canActivate then
-      canActivate = b.canActivate(card)
+      canActivate = b.canActivate(card,1)
      else
       canActivate = true
      end
      if canActivate then table.insert(items,{"ACTIVATE","activate"}) end
     elseif card.cat=="trap" and not (b and b.responseOnly) and not staticActive("blocksTraps") then
-     if not (b and b.canActivate) or b.canActivate(card) then
+     if not (b and b.canActivate) or b.canActivate(card,1) then
       table.insert(items,{"ACTIVATE","activate"})
      end
     end
    end
   end
 
+ end
+
+ -- Opp's turn: allow ACTIVATE on face-down Quick-Play spells (SS2 timing).
+ -- Traps already chain via their own listens entries during opp's actions.
+ if c.side==1 and G.active~=1 and c.row==2 and c.col>=1 and c.col<=3 then
+  local card=G.st[1][c.col]
+  if card and card.facedown and not card.setThisTurn
+     and card.cat=="spell" and card.subtype=="quickplay" then
+   local b=behaviorOf(card)
+   if not (b and b.canActivate) or b.canActivate(card,1) then
+    table.insert(items,{"ACTIVATE","activate"})
+   end
+  end
  end
 
  local hovCard=getHoveredCard()
@@ -152,11 +161,9 @@ function execAction(key)
  elseif key=="set" then
   startMonsterPlacement(G.cur.col+1,"set")
  elseif key=="ignition" then
-  local card=G.mon[1][c.col]
-  local b=card and behaviorOf(card)
-  if b and b.ignition and b.ignition.activate then
-   b.ignition.activate(card,1,c.col)
-  end
+  submitIntent(1,"IGNITION",{col=c.col})
+ elseif key=="hand_ignition" then
+  submitIntent(1,"HAND_IGNITION",{handIdx=c.col+1})
  elseif key=="attack" then
   local atkCol=c.col
   local attacker=G.mon[1][atkCol]
@@ -222,39 +229,6 @@ function execAction(key)
   -- response window when the player asks to skip ahead.
   if submitIntent(1,"ADVANCE_PHASE",{to=PH_END}) then
    G.autoTimer=1
-  end
-
- elseif key=="oracle_e1" or key=="oracle_e2" or key=="oracle_e3" or key=="oracle_done" then
-  local op=G.oraclePick; if not op then return end
-  if key~="oracle_done" then
-   local eff=({oracle_e1=1,oracle_e2=2,oracle_e3=3})[key]
-   op.used[eff]=true
-   if eff==1 then
-    op.card.atkMod=(op.card.atkMod or 0)+op.lvlSum*100
-   elseif eff==2 then
-    local opp=3-op.plr
-    for i=1,3 do
-     if G.mon[opp][i] and G.mon[opp][i].facedown then
-      revealAndDestroyMon(opp,i,"effect")
-     end
-    end
-    checkEquips()
-   elseif eff==3 then
-    local opp=3-op.plr
-    for i=1,3 do
-     local m=G.mon[opp][i]
-     if m then
-      m.atkMod=(m.atkMod or 0)-2000
-      m.defMod=(m.defMod or 0)-2000
-     end
-    end
-   end
-   op.remaining=op.remaining-1
-  end
-  if key=="oracle_done" or op.remaining<=0 then
-   G.oraclePick=nil
-  else
-   openOraclePick(op)
   end
 
  end

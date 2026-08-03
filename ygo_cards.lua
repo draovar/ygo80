@@ -37,10 +37,13 @@ CARDS={
   name="Giant Soldier", cat="monster", type="rock", attr="earth", atk=1300, def=2000, lvl=3, spr=262,  desc="A towering stone giant with impenetrable armor and very high defense."
   },
  gravekeeper_curse={
-  name="Gravekeeper's Curse", cat="monster", type="spellcaster", attr="dark", effect="gkcurse", atk=800, def=600, lvl=3, spr=354,  desc="Each time this card is Normal or Special Summoned, inflict 800 damage to your opponent."
+  name="Gravekeeper's Curse", cat="monster", type="spellcaster", attr="dark", effect="gkcurse", atk=800, def=800, lvl=3, spr=354,  desc="Each time this card is Normal or Special Summoned, inflict 800 damage to your opponent."
   },
  baby_dragon={
   name="Baby Dragon", cat="monster", type="dragon", attr="wind", atk=1200, def=700, lvl=3, spr=388,  desc="A small dragon with much potential. One day it will grow into a fearsome beast."
+ },
+ flame_manipulator={
+  name="Flame Manipulator", cat="monster", type="spellcaster", attr="fire", atk=900, def=1000, lvl=3, spr=196,  desc="This Spellcaster attacks enemies with fire-related spells such as Sea of Flames and Wall of Fire."
  },
 
  -- Level 4
@@ -81,7 +84,7 @@ CARDS={
   name="Rogue Doll", cat="monster", type="spellcaster", attr="light", atk=1600, def=1000, lvl=4, spr=300,  desc="A possessed doll that moves on its own will, wielding powerful magic."
  },
  legion_fiend_jester={
-  name="Legion the Fiend Jester", cat="monster", type="fiend", attr="dark", effect="legion", atk=1200, def=0, lvl=4, spr=320,  desc="Once per turn: Tribute Summon 1 Spellcaster in ATK pos, in addition to your Normal Summon. If sent from field to GY: add 1 Spellcaster Normal Monster from Deck or GY to hand."
+  name="Legion the Fiend Jester", cat="monster", type="spellcaster", attr="dark", effect="legion", atk=1300, def=1500, lvl=4, spr=320,  desc="Once per turn: Tribute Summon 1 Spellcaster in ATK pos, in addition to your Normal Summon. If sent from field to GY: add 1 Spellcaster Normal Monster from Deck or GY to hand."
  },
  the_stern_mystic={
   name="The Stern Mystic", cat="monster", type="spellcaster", attr="light", effect="sternmystic", atk=1500, def=1200, lvl=4, spr=324,  desc="FLIP: Both players reveal all face-down cards on the field. After this, return them to their original positions."
@@ -97,13 +100,39 @@ CARDS={
  },
  gravekeeper_spy={
   name="Gravekeeper's Spy", cat="monster", type="spellcaster", attr="dark", effect="gkspy", atk=1200, def=2000, lvl=4, spr=334,  desc="FLIP: Special Summon 1 'Gravekeeper's' monster from your Deck."},
+ gravekeeper_guard={
+  name="Gravekeeper's Guard", cat="monster", type="spellcaster", attr="dark", effect="gkguard", atk=1000, def=1900, lvl=4, spr=160,  desc="FLIP: Target 1 monster on the field; return it to its owner's hand."
+ },
+ mystic_horseman={
+  name="Mystic Horseman", cat="monster", type="beast", attr="earth", atk=1300, def=1550, lvl=4, spr=194,  desc="A mythical creature, half-man and half-horse, said to outrun the wind itself."
+ },
+ masaki_legendary_swordsman={
+  name="Masaki Legendary Swordsman", cat="monster", type="warrior", attr="earth", atk=1100, def=1100, lvl=4, spr=198,  desc="Legendary swordmaster Masaki is a veteran of over 100 battles."
+ },
+ gearfried_iron_knight={
+  name="Gearfried Iron Knight", cat="monster", type="warrior", attr="earth", effect="gearfried", atk=1800, def=1600, lvl=4, spr=200,  desc="If either player equips an Equip Card(s) to this card: destroy that Equip Card(s)."
+ },
+
+ -- Level 5
+ thunder_dragon={
+  name="Thunder Dragon", cat="monster", type="thunder", attr="light", effect="thunderdragon", atk=1600, def=1500, lvl=5, spr=192,  desc="You can discard this card; add up to 2 'Thunder Dragon' from your Deck to your hand."
+ },
+ alligator_sword_dragon={
+  name="Alligator Sword Dragon", cat="monster", subtype="fusion", type="dragon", attr="wind", atk=1700, def=1500, lvl=5, spr=226, materials={"alligators_sword","baby_dragon"}, desc="\"Alligator's Sword\" + \"Baby Dragon\""
+ },
+ flame_swordsman={
+  name="Flame Swordsman", cat="monster", subtype="fusion", type="warrior", attr="fire", atk=1800, def=1600, lvl=5, spr=238, materials={"flame_manipulator","masaki_legendary_swordsman"}, desc="\"Flame Manipulator\" + \"Masaki the Legendary Swordsman\""
+ },
 
  -- Level 6
+ luster_dragon_2={
+  name="Luster Dragon #2", cat="monster", type="dragon", attr="wind", atk=2400, def=1400, lvl=6, spr=162,  desc="An emerald-scaled dragon of immense power, the elder of its kin."
+ },
  summoned_skull={
   name="Summoned Skull", cat="monster", type="fiend", attr="dark", atk=2500, def=1200, lvl=6, spr=292,  desc="A powerful fiend that rules the darkness. One of the strongest monsters."
  },
  dark_magician_girl={
-  name="Dark Magician Girl", cat="monster", type="spellcaster", attr="light", effect="dmgirl", atk=2000, def=1700, lvl=6, spr=302,  desc="Gains 300 ATK for each Dark Magician in either GY."
+  name="Dark Magician Girl", cat="monster", type="spellcaster", attr="dark", effect="dmgirl", atk=2000, def=1700, lvl=6, spr=302,  desc="Gains 300 ATK for each Dark Magician in either GY."
  },
   jinzo={
   name="Jinzo", cat="monster", type="machine", attr="dark", effect="jinzo", atk=2400, def=1500, lvl=6, spr=328,  desc="While this card is face-up on the field, Trap Cards cannot be activated."},
@@ -120,15 +149,34 @@ CARDS={
  },
  buster_blader={
   name="Buster Blader", cat="monster", type="warrior", attr="earth", effect="busterblader", atk=2600, def=2300, lvl=7, spr=322,  desc="Gains 500 ATK for each Dragon-type monster your opponent controls or has in their GY."},
+ thousand_dragon={
+  name="Thousand Dragon", cat="monster", subtype="fusion", type="dragon", attr="wind", atk=2400, def=2000, lvl=7, spr=224, materials={"time_wizard","baby_dragon"}, desc="\"Time Wizard\" + \"Baby Dragon\""
+ },
+ twin_headed_thunder_dragon={
+  name="Twin-Headed Thunder Dragon", cat="monster", subtype="fusion", type="thunder", attr="light", atk=2800, def=2100, lvl=7, spr=232, materials={"thunder_dragon","thunder_dragon"}, desc="\"Thunder Dragon\" + \"Thunder Dragon\""
+ },
 
  -- Level 8
  blue_eyes_w_dragon={
   name="Blue-Eyes W Dragon", cat="monster", type="dragon", attr="light", atk=3000, def=2500, lvl=8, spr=362,  desc="This legendary dragon is a powerful engine of destruction."
  },
+ dark_paladin={
+  name="Dark Paladin", cat="monster", subtype="fusion", type="spellcaster", attr="dark", effect="darkpaladin", atk=2900, def=2400, lvl=8, spr=230, materials={"dark_magician","buster_blader"}, desc="\"Dark Magician\" + \"Buster Blader\"\nWhen opp activates a Spell: discard 1 card to negate and destroy it. Gains 500 ATK per Dragon on the field or in either GY."
+ },
+
+ -- Level 9
+ black_skull_dragon={
+  name="Black Skull Dragon", cat="monster", subtype="fusion", type="dragon", attr="dark", atk=3200, def=2500, lvl=9, spr=228, materials={"summoned_skull","red_eyes_b_dragon"}, desc="\"Summoned Skull\" + \"Red-Eyes B. Dragon\""
+ },
 
   -- Level 10
  gravekeeper_oracle={
   name="Gravekeeper's Oracle", cat="monster", type="spellcaster", attr="dark", effect="gkoracle", atk=2000, def=1500, lvl=10, spr=358,  desc="Tribute 1 GK or 3 monsters to summon. On Tribute Summon: activate up to [GKs tributed] effects in sequence:\n * incr ATK by tributed levels x100\n * destroy opp set monsters\n * opp monsters -2000 ATK/DEF"
+ },
+
+ -- Level 12
+ blue_eyes_ultimate_dragon={
+  name="Blue-Eyes Ultimate Dragon", cat="monster", subtype="fusion", type="dragon", attr="light", atk=4500, def=3800, lvl=12, spr=234, materials={"blue_eyes_w_dragon","blue_eyes_w_dragon","blue_eyes_w_dragon"}, desc="\"Blue-Eyes White Dragon\" + \"Blue-Eyes White Dragon\" + \"Blue-Eyes White Dragon\""
  },
 
  -- ============================================================
@@ -156,6 +204,10 @@ CARDS={
  },
  monster_reborn={
   name="Monster Reborn", cat="spell", subtype="normal", effect="monsterreborn", spr=490,  desc="Target 1 monster in either GY; Special Summon it to your field in ATK position."
+ },
+ polymerization={
+  name="Polymerization", cat="spell", subtype="normal", effect="polymerization", spr=492,
+  desc="Fusion Summon 1 Fusion Monster from your Extra Deck, using monsters from your hand or field as Fusion Materials."
  },
  gravekeeper_stele={
   name="Gravekeeper's Stele", cat="spell", subtype="normal", effect="gkstele", spr=418,  desc="If you have at least 1 'Gravekeeper's' monster in your GY: Target 2 'Gravekeeper's' monsters in your GY; add them to your hand (1 at a time)."
@@ -185,6 +237,9 @@ CARDS={
   name="Mystical Typhoon", cat="spell", subtype="quickplay", effect="mst", spr=480,  desc="Target 1 Spell/Trap on the field; destroy that target."},
  graceful_dice={
   name="Graceful Dice", cat="spell", subtype="quickplay", effect="gracefuldice", spr=420,  desc="Roll a six-sided die. All face-up monsters you control gain ATK and DEF equal to the result x100, until the end of the turn."},
+ enemy_controller={
+  name="Enemy Controller", cat="spell", subtype="quickplay", effect="enemycontroller", spr=202,  desc="Activate 1 of these effects:\n * Target 1 face-up monster your opp controls; change its battle position.\n * Tribute 1 monster, then target 1 face-up monster your opp controls; take control of it until the End Phase."
+ },
 
  -- Continuous
  swords_of_revealing_light={
@@ -219,9 +274,15 @@ CARDS={
  seven_tools={
   name="Seven Tools", cat="trap", subtype="counter", effect="seventools", spr=494,  desc="When a Trap is activated: Pay 1000 LP; negate the activation and destroy it."},
  negate_attack={
-  name="Negate Attack", cat="trap", subtype="counter", effect="negateattack", spr=430,  desc="When an opponent's monster declares an attack: Target the attacking monster; negate the attack, then end the Battle Phase."},
+  name="Negate Attack", cat="trap", subtype="counter", effect="negateattack", spr=430,  desc="When an opponent's monster declares an attack: Target the attacking monster; negate the attack, then end the Battle Phase."
+ },
+ dark_illusion={
+  name="Dark Illusion", cat="trap", subtype="counter", effect="darkillusion", spr=204,  desc="When a Spell/Trap or monster effect is activated that targets a DARK monster on the field: negate the activation, and if you do, destroy that card."},
  kunai_with_chain={
   name="Kunai with Chain", cat="trap", subtype="normal", effect="kunaichain", spr=392,  desc="When an opp monster declares an attack: pick one or both - change the attacker to DEF, OR equip to a face-up monster you control (gains 500 ATK)."},
+ ring_of_destruction={
+  name="Ring of Destruction", cat="trap", subtype="normal", effect="ringdestruction", spr=206,  desc="During opp's turn (any response window): target 1 face-up opp monster whose ATK <= opp LP; destroy it. You take damage equal to half its original ATK, then if you survive, opp takes the same damage."
+ },
 
 }
 
@@ -250,60 +311,74 @@ DECK1 = {
   "mirror_force", "mirror_force", "trap_hole", "gravity_bind",
 }
 
+-- Player Extra Deck (Fusion / future Synchro etc.). Max 4 for now. Stored as
+-- IDs; loaded into G.extra[1] as full card instances at startGame.
+DECK1_EXTRA = {"thousand_dragon", "alligator_sword_dragon", "black_skull_dragon", "dark_paladin"}
+
 -- Opponents
 
 DECK_YUGI = {
   -- Monsters
-  "dark_magician_girl", "dark_magician", "summoned_skull", "feral_imp", "kuriboh", "sangan", "giant_soldier", "mystical_elf", "legion_fiend_jester", "rogue_doll", "double_coston", "man_eater_bug", "man_eater_bug",
+  "dark_magician_girl", "dark_magician", "summoned_skull", "buster_blader", "kuriboh", "sangan", "giant_soldier", "mystical_elf", "legion_fiend_jester", "rogue_doll", "double_coston",
   -- Spells
-  "dark_hole", "ookazi", "ookazi",
+  "fissure", "dark_hole", "monster_reborn", "mystical_typhoon", "thousand_knives", "swords_of_revealing_light",
   -- Traps
-  "mirror_force", "mirror_force", "fissure", "trap_hole",
+  "mirror_force","magic_jammer", "trap_hole",
 }
 
+EXTRA_YUGI = {}
+
 DECK_JOEY = {
-  -- TEST DECK: Lord of D. protection. Packed with monster-targeting effects.
   -- Monsters
-  "man_eater_bug", "man_eater_bug", "man_eater_bug", "man_eater_bug",
-  "battle_ox", "la_jinn", "vorse_raider", "seven_color_fish", "ufo_turtle",
+  "red_eyes_b_dragon", "jinzo", "rocket_warrior", "alligators_sword", "alligators_sword", "ufo_turtle", "ufo_turtle", "masaki_legendary_swordsman", "flame_manipulator", "baby_dragon", "baby_dragon", "time_wizard",
   -- Spells
-  "fissure", "fissure", "fissure", "fissure", "ookazi", "ookazi",
+  "giant_trunade", "graceful_dice", "sogen", "stray_lambs", "polymerization",
   -- Traps
-  "trap_hole", "trap_hole", "trap_hole", "mirror_force", "mirror_force",
+  "trap_hole", "kunai_with_chain", "call_of_the_haunted",
 }
+
+EXTRA_JOEY = {"thousand_dragon", "alligator_sword_dragon", "flame_swordsman"}
 
 DECK_KAIBA = {
   -- Monsters
-  "summoned_skull", "summoned_skull", "red_eyes_b_dragon", "red_eyes_b_dragon", "battle_ox", "la_jinn", "vorse_raider",
+  "blue_eyes_w_dragon", "blue_eyes_w_dragon", "blue_eyes_w_dragon", "luster_dragon_2", "vorse_raider", "spear_dragon", "lord_of_d", "lord_of_d", "la_jinn", "battle_ox", "aqua_madoor", "kaibaman",
   -- Spells
-  "dark_hole", "raigeki", "fissure", "mystical_typhoon", "mystical_typhoon",
+  "cost_down", "monster_reborn", "stamping_destruction", "stamping_destruction", "enemy_controller",
   -- Traps
-  "trap_hole", "mirror_force", "mirror_force",
+  "negate_attack","magic_jammer", "ring_of_destruction",
 }
+
+EXTRA_KAIBA = {}
 
 DECK_MARIK = {
   -- Monsters
-  "gravekeeper_oracle", "gravekeeper_shaman", "gravekeeper_spy", "gravekeeper_spy",
-  "gravekeeper_assailant", "gravekeeper_assailant", "gravekeeper_curse", "gravekeeper_curse",
-  "a_cat_of_ill_omen", "a_cat_of_ill_omen",
+  "gravekeeper_oracle", "gravekeeper_shaman", "gravekeeper_shaman", "gravekeeper_spy", "gravekeeper_spy", "gravekeeper_assailant", "gravekeeper_assailant", "gravekeeper_curse", "gravekeeper_curse", "gravekeeper_guard", "a_cat_of_ill_omen", "man_eater_bug",
   -- Spells
-  "dark_hole", "raigeki", "ookazi", "necrovalley", "necrovalley", "gravekeeper_stele", "gravekeeper_stele",
+  "raigeki", "necrovalley", "necrovalley", "gravekeeper_stele",
   -- Traps
-  "trap_hole", "mirror_force", "mirror_force",
+  "trap_hole", "dark_illusion", "dark_illusion", "seven_tools",
 }
+
+EXTRA_MARIK = {}
+
+STRATEGY_DEFAULT = {}
+STRATEGY_YUGI    = {}
+STRATEGY_JOEY    = {}
+STRATEGY_KAIBA   = {}
+STRATEGY_MARIK   = {}
 
 -- Selectable opponents. spr = top-left tile of a 32x32 (4x4 tile) portrait.
 OPPONENTS={
- {name="YUGI",  spr=384, deck=DECK_YUGI,  quotes={
+ {name="YUGI",  spr=384, deck=DECK_YUGI,  extra=EXTRA_YUGI,  strategy=STRATEGY_YUGI,  quotes={
   "I believe in the Heart of the Cards!",
   "Because I have friends who believe in me, I can fight!"}},
- {name="JOEY",  spr=388, deck=DECK_JOEY,  quotes={
+ {name="JOEY",  spr=388, deck=DECK_JOEY,  extra=EXTRA_JOEY,  strategy=STRATEGY_JOEY,  quotes={
   "I'm gonna take this loser to school!",
   "It's Wheeler time, baby!"}},
- {name="KAIBA", spr=392, deck=DECK_KAIBA, quotes={
+ {name="KAIBA", spr=392, deck=DECK_KAIBA, extra=EXTRA_KAIBA, strategy=STRATEGY_KAIBA, quotes={
   "You're a third-rate duelist with a fourth-rate deck!",
   "Why don't you go look for an opponent you can actually beat? Like an infant, or a monkey."}},
- {name="MARIK", spr=396, deck=DECK_MARIK, quotes={
+ {name="MARIK", spr=396, deck=DECK_MARIK, extra=EXTRA_MARIK, strategy=STRATEGY_MARIK, quotes={
   "The shadows hunger for your soul.",
   "Is that fear in your eyes? I like to see this side of you.",
   "Mercy is for the weak, like you, my friend."}},

@@ -123,6 +123,71 @@ function battleDamageImmune(card,ctrl)
  return (b and b.noBattleDamage and b.noBattleDamage(card,ctrl)) or false
 end
 
+-- Fusion-summon helpers (Polymerization). Materials are matched by card ID
+-- (CARDS key) via the `id` field set by makeCard. Counts own hand + own
+-- monster zones (face-up OR face-down) as eligible sources. Face-down own
+-- monsters are visible to their controller, so using them as material is
+-- legal (and doesn't flip them — they go straight to GY).
+function fusionMaterialsAvailable(fusion,plr)
+ if not (fusion and fusion.materials) then return false end
+ local need={}
+ for _,nm in ipairs(fusion.materials) do need[nm]=(need[nm] or 0)+1 end
+ local have={}
+ for _,c in ipairs(G.hand[plr]) do
+  if c.cat=="monster" and c.id then have[c.id]=(have[c.id] or 0)+1 end
+ end
+ for col=1,3 do
+  local m=G.mon[plr][col]
+  if m and m.cat=="monster" and m.id then have[m.id]=(have[m.id] or 0)+1 end
+ end
+ for nm,n in pairs(need) do
+  if (have[nm] or 0)<n then return false end
+ end
+ return true
+end
+
+-- Returns the list of indices into G.extra[plr] for Fusion Monsters whose
+-- materials are all currently available in plr's hand + face-up field.
+function polyValidTargets(plr)
+ local out={}
+ for i,c in ipairs(G.extra[plr] or {}) do
+  if c.cat=="monster" and c.subtype=="fusion" and fusionMaterialsAvailable(c,plr) then
+   out[#out+1]=i
+  end
+ end
+ return out
+end
+
+-- Spinning-sword "tribute" animation over the picked Polymerization materials,
+-- visually matching the tribute-summon anim. Blocks via waitAnim, so call this
+-- inside a procActivate resolveFn (works for both player and AI paths since
+-- they share the same coroutine context at chain resolution). `picks` is the
+-- list of {kind="hand"|"field", hi=<handIdx> | fc=<fieldCol>} captured during
+-- material selection. Field materials animate over the monster row, hand
+-- materials over the hand row.
+function playMaterialTributeAnim(plr,picks)
+ local zones={}
+ local hand=G.hand[plr]
+ local fieldY=(plr==1) and PY_M or OY_M
+ local handY =(plr==1) and PY_H or OY_H
+ for _,p in ipairs(picks) do
+  if p.kind=="field" then
+   local x=(plr==1) and COL[p.fc] or COL[4-p.fc]
+   zones[#zones+1]={x=x,y=fieldY}
+  else
+   local x=handX(#hand,p.hi-1)
+   zones[#zones+1]={x=x,y=handY}
+  end
+ end
+ if #zones==0 then return end
+ waitAnim(playAnim(45,function(t,f)
+  local rot=(4-(t//8)%4)%4
+  for _,z in ipairs(zones) do
+   spr(SPR_FUSE,z.x+3,z.y+3,0,1,0,rot,2,2)
+  end
+ end))
+end
+
 -- Decrement Swords of Revealing Light counters at an End Phase. Swords belongs
 -- to the opponent of the player whose turn is ending; destroyed after that
 -- opponent's 3rd End Phase. Call this before G.active flips.
@@ -143,26 +208,54 @@ function isGravekeeper(card)
 end
 
 
--- AI Call of the Haunted resolve: revive AI's highest-ATK GY monster.
--- Used by BEHAVIORS.callhaunted.activate when opts.plr==2 (AI manually
--- activates from menu). The chain-response path uses cohSpecialSummon below.
-function aiResolveCallHaunted(stCol,trap)
- local best,bestI=-1,nil
- for i,c in ipairs(G.gy[2]) do
-  if c.cat=="monster" and c.atk and c.atk>best then best=c.atk; bestI=i end
- end
- local emptyCol=firstEmpty(G.mon[2])
- if bestI and emptyCol then
-  local m=table.remove(G.gy[2],bestI)
-  m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
-  G.mon[2][emptyCol]=m
-  trap.linkedMon=m; m.linkedTrap=trap
-  summonEvent(m,2,emptyCol,"special",nil)
+-- Gravekeeper's Oracle: pick up to `n` of the three effects, one per loop,
+-- each usable once. Runs as a coroutine — choose() yields until the player
+-- picks; the AI takes them highest-impact first (E3 → E2 → E1).
+function oraclePickLoop(card,plr,n,lvlSum)
+ local opp=3-plr
+ local used={}
+ while n>0 do
+  local items={}
+  if not used[1] then items[#items+1]={"add "..lvlSum*100 .." ATK","e1"} end
+  if not used[2] then items[#items+1]={"dstry set mons","e2"} end
+  if not used[3] then items[#items+1]={"opp -2000 stats","e3"} end
+  items[#items+1]={"DONE","done"}
+  local key=choose{
+   kind="menu",plr=plr,items=items,
+   aiPick=function(req)
+    for _,want in ipairs({"e3","e2","e1"}) do
+     for _,it in ipairs(req.items) do if it[2]==want then return want end end
+    end
+    return "done"
+   end,
+  }
+  if not key or key=="done" then return end
+  local eff=({e1=1,e2=2,e3=3})[key]
+  used[eff]=true
+  if eff==1 then
+   card.atkMod=(card.atkMod or 0)+lvlSum*100
+  elseif eff==2 then
+   for i=1,3 do
+    if G.mon[opp][i] and G.mon[opp][i].facedown then
+     revealAndDestroyMon(opp,i,"effect")
+    end
+   end
+   checkEquips()
+  else
+   for i=1,3 do
+    local m=G.mon[opp][i]
+    if m then
+     m.atkMod=(m.atkMod or 0)-2000
+     m.defMod=(m.defMod or 0)-2000
+    end
+   end
+  end
+  n=n-1
  end
 end
 
--- Call of the Haunted's react body. Shared by listens.ATTACK and
--- listens.PHASE. Runs as a coroutine — choose() yields
+-- Call of the Haunted's revive body. Shared by activate + listens.ATTACK
+-- and listens.PHASE. Runs as a coroutine — choose() yields
 -- until the player picks (or AI auto-resolves via aiAnswer's aiPickCard).
 -- self = listener self {card=trap,plr,controller,zone="st",col}.
 function cohSpecialSummon(self)

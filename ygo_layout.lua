@@ -80,7 +80,8 @@ CED  = 2   -- extra deck zone                           (orange)
 CCA  = 9   -- normal monster face                       (tan)
 CME  = 2   -- effect monster face                       (orange)
 CSP  = 11   -- spell card face                           (dark green)
-CTR  = 13  -- trap card face                            (purple)
+CTR  = 6  -- trap card face                            (purple)
+CFU  = 13  -- fusion monster face                       (purple)
 CCB  = 8   -- card back                                 (brown)
 -- HUD & cursor
 CLP  = 4   -- LP bar fill                               (blue)
@@ -97,15 +98,17 @@ PH_DRAW=1; PH_STBY=2; PH_MAIN=3; PH_BATTLE=4; PH_END=5
 -- Gameplay constants
 START_LP   = 4000
 MAX_DECK   = 20    -- pmem holds 20 IDs (4 slots × 5 at 6 bits); see dbLoad/dbSave
+MAX_EXTRA  = 4     -- fusion / extra deck cap; pmem slot 4 (4 IDs × 6 bits)
 MAX_COPIES = 3     -- max copies of a single card in one deck
 
 NAME_SCROLL_PAUSE= 300  -- frames to hold at start/end of name scroll
 
 -- Sprite IDs
-SPR_SWORD    = 6    -- spinning sword (tribute anim)
+SPR_TRIB     = 6    -- spinning sword (tribute anim)
+SPR_FUSE     = 8    -- fusion-summon material anim
 SPR_CARDBACK = 32   -- 3x3 card back
 SPR_FRAME    = 35   -- 3x3 card border
-SPR_STAR     = 96   -- 5x5 level star
+SPR_STAR     = 76   -- 5x5 level star
 
 -- Attribute icon (8x8): monster attributes + spell/trap markers
 ATTR_SPR = {dark=80, earth=81, fire=82, light=83, water=84, wind=85,

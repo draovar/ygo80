@@ -13,6 +13,7 @@ function newGame()
   mon={{nil,nil,nil},{nil,nil,nil}},
   st ={{nil,nil,nil},{nil,nil,nil}},
   fs ={nil,nil},  -- field spell per player (the FS zone)
+  extra={{},{}},  -- Extra Deck per player (populated at startGame; max 4 for now)
   hand={{},{}},
   gy  ={{},{}},
   deck={{},{}},
@@ -127,6 +128,60 @@ function drawGYView()
   else
    print(((sel.cat or ""):upper()).." - "..((sel.subtype or "normal"):upper()),bx+4,by+bh-16,CT,true,1,false)
   end
+ end
+ print("UP/DN browse   B close   X info",bx+4,by+bh-8,CLEG,true,1,true)
+end
+
+-- Extra-Deck viewer. Same footprint and controls as drawGYView; lists ED
+-- cards (all fusion monsters in V1) in natural index order (1..N).
+function drawEDView()
+ local ev=G.edView
+ local ex=G.extra[ev.plr]
+ local bx,by,bw,bh=20,10,200,116
+ rect(bx,by,bw,bh,CB)
+ rectb(bx,by,bw,bh,CD)
+ rectb(bx+1,by+1,bw-2,bh-2,CD)
+
+ local title=(ev.plr==1) and "YOUR EXTRA DECK" or "OPP EXTRA DECK"
+ print(title,bx+4,by+4,CFU,true,1,false)
+ local cnt="("..#ex..")"
+ print(cnt,bx+bw-4-#cnt*6,by+4,CT,true,1,false)
+ line(bx+2,by+12,bx+bw-3,by+12,CD)
+
+ if #ex==0 then
+  print("Empty",bx+(bw-30)//2,by+bh//2-3,CT,true,1,false)
+  print("B close",bx+4,by+bh-8,CLEG,true,1,true)
+  return
+ end
+
+ local listX,listY,rowH,nameX,atkX=bx+4,by+15,10,bx+18,bx+bw-52
+ local botDiv=by+bh-19
+ local maxVis=math.floor((botDiv-listY)/rowH)
+ local scrollTop=math.max(1,math.min(ev.sel-maxVis//2,math.max(1,#ex-maxVis+1)))
+ for row=1,maxVis do
+  local idx=scrollTop+row-1
+  if idx>#ex then break end
+  local card=ex[idx]
+  local iy=listY+(row-1)*rowH
+  local isSel=(idx==ev.sel)
+  if isSel then rect(bx+2,iy-1,bw-4,9,CHL) end
+  local tc=isSel and CB or CT
+  local dc=isSel and CB or CD
+  print(idx..".",listX,iy,dc,true,1,false)
+  print(string.sub(card.name or "?",1,21),nameX,iy,tc,true,1,false)
+  if card.atk then print("ATK "..card.atk,atkX,iy,dc,true,1,false) end
+ end
+ if #ex>maxVis then
+  local barH=maxVis*rowH
+  local pct=(scrollTop-1)/math.max(1,#ex-maxVis)
+  local markY=listY+math.floor(pct*(barH-4))
+  rect(bx+bw-4,listY,2,barH,CB); rect(bx+bw-4,markY,2,4,CD)
+ end
+
+ line(bx+2,botDiv,bx+bw-3,botDiv,CD)
+ local sel=ex[ev.sel]
+ if sel then
+  print("ATK:"..(sel.atk or 0).."  DEF:"..(sel.def or 0).."  LV:"..(sel.lvl or 0),bx+4,by+bh-16,CT,true,1,false)
  end
  print("UP/DN browse   B close   X info",bx+4,by+bh-8,CLEG,true,1,true)
 end
@@ -246,6 +301,12 @@ function animDrawCard(p)
 end
 
 function addAnim(frames,fn,onDone)
+ -- Simulation runs headless: fire the completion callback now so effect
+ -- bodies that waitAnim() on it resume immediately instead of stalling.
+ if G.sim then
+  if onDone then onDone() end
+  return
+ end
  table.insert(ANIM,{frames=frames,t=frames,fn=fn,onDone=onDone})
 end
 
@@ -388,6 +449,24 @@ function returnSTToHand(plr,col)
  if c.subtype=="equip" then c.equippedTo=nil end
  table.insert(G.hand[plr],c)
  return c
+end
+
+function returnMonsterToHand(plr,col)
+ local m=G.mon[plr][col]
+ if not m then return nil end
+ G.mon[plr][col]=nil
+ bumpStats()
+ -- If summoned by a linked trap (CoH), destroy the trap too.
+ if m.linkedTrap and not staticActive("blocksTraps") then
+  for p=1,2 do for c=1,3 do
+   if G.st[p][c]==m.linkedTrap then sendSpellTrapToGY(p,c,"rule") end
+  end end
+ end
+ m.facedown=false; m.attacked=false; m.summoned=false
+ m.posChanged=false; m.linkedTrap=nil
+ m.borrowedFrom=nil; m.borrowedAtTurn=nil
+ table.insert(G.hand[plr],m)
+ return m
 end
 
 function returnFSToHand(plr)

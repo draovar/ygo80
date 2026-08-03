@@ -11,16 +11,17 @@ function resetTurnFlags()
   if G.st[2][i] then G.st[2][i].setThisTurn=false end
  end
  G.legionSummonUsed=false
- G.legionSearchUsed=false
+ G.legionSearchUsed={}
  G.extraSpellcasterSummon=false
 end
 
 -- Legion: search deck (+ GY when Necrovalley is not active) for a
 -- vanilla Spellcaster and add it to hand. Yields via choose{}, so callers
 -- must invoke this from inside a proc coroutine frame.
-function legionSearch()
- if G.legionSearchUsed then return end
- G.legionSearchUsed=true
+function legionSearch(plr)
+ G.legionSearchUsed=G.legionSearchUsed or {}
+ if G.legionSearchUsed[plr] then return end
+ G.legionSearchUsed[plr]=true
  local items={}
  local function addItem(source,card,realIdx)
   if card.type=="spellcaster" and not card.effect then
@@ -28,18 +29,18 @@ function legionSearch()
     name=card.name,atk=card.atk,def=card.def,lvl=card.lvl,desc=card.desc})
   end
  end
- for i,id in ipairs(G.deck[1]) do addItem("deck",CARDS[id],i) end
+ for i,id in ipairs(G.deck[plr]) do addItem("deck",CARDS[id],i) end
  if not staticActive("blocksGYMoves") then
-  for i,card in ipairs(G.gy[1]) do addItem("gy",card,i) end
+  for i,card in ipairs(G.gy[plr]) do addItem("gy",card,i) end
  end
  if #items==0 then return end
- local ans=choose{kind="card",plr=1,items=items,title="LEGION  SPELLCASTER"}
+ local ans=choose{kind="card",plr=plr,items=items,title="LEGION  SPELLCASTER"}
  if not ans then return end
  local it=ans.item
  if it.source=="deck" then
-  table.insert(G.hand[1],makeCard(table.remove(G.deck[1],it.realIdx)))
+  table.insert(G.hand[plr],makeCard(table.remove(G.deck[plr],it.realIdx)))
  else
-  table.insert(G.hand[1],table.remove(G.gy[1],it.realIdx))
+  table.insert(G.hand[plr],table.remove(G.gy[plr],it.realIdx))
  end
 end
 
@@ -122,6 +123,17 @@ function handleInput()
   elseif btnp(1) then gv.sel=math.max(1,gv.sel-1)
   elseif btnp(6) then if gy[gv.sel] then G.infoCard=gy[gv.sel] end
   elseif btnp(5) then G.mode="free"; G.gyView=nil end
+  return
+ end
+
+ -- Extra-Deck viewer
+ if G.mode=="ed_view" and G.edView then
+  local ev=G.edView
+  local ex=G.extra[ev.plr]
+  if btnp(0) then ev.sel=math.max(1,ev.sel-1)
+  elseif btnp(1) then ev.sel=math.min(#ex,ev.sel+1)
+  elseif btnp(6) then if ex[ev.sel] then G.infoCard=ex[ev.sel] end
+  elseif btnp(5) then G.mode="free"; G.edView=nil end
   return
  end
 
@@ -417,6 +429,10 @@ function handleInput()
    if #G.gy[1]>0 then G.mode="gy_view"; G.gyView={plr=1,sel=#G.gy[1]} end
   elseif c.row==1 and c.col==0 and c.side==2 then  -- opp GY
    if #G.gy[2]>0 then G.mode="gy_view"; G.gyView={plr=2,sel=#G.gy[2]} end
+  elseif c.row==2 and c.col==0 and c.side==1 then  -- player ED
+   if #G.extra[1]>0 then G.mode="ed_view"; G.edView={plr=1,sel=1} end
+  elseif c.row==2 and c.col==4 and c.side==2 then  -- opp ED
+   if #G.extra[2]>0 then G.mode="ed_view"; G.edView={plr=2,sel=1} end
   else
    local items=buildMenu()
    if items then

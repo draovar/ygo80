@@ -7,27 +7,63 @@ DB_COLS=4; DB_ROWS=5
 DB_CW=20; DB_CH=22; DB_CG=1
 DB_LX=87       -- x where right panel starts
 DB_LIST_RH=10  -- list row height
-DB_LIST_VIS=11 -- visible list rows
+DB_LIST_VIS=12 -- visible list rows
 
 function dbGridX(c) return 2+c*(DB_CW+DB_CG) end
 function dbGridY(r) return 10+r*(DB_CH+DB_CG) end
 
-function dbCountInDeck(id)
+function dbCountIn(arr,id)
  local n=0
- for _,v in ipairs(DB.deck) do if v==id then n=n+1 end end
+ for _,v in ipairs(arr) do if v==id then n=n+1 end end
  return n
 end
 
--- pmem layout: MAX_DECK card IDs at 6 bits each (so up to 63 unique cards),
--- packed 5 IDs per 32-bit slot across 4 slots (5*4 = 20 = MAX_DECK).
+-- Cards visible in the right-panel list, filtered by the active section:
+-- main = non-fusion cards (the 20-card deck); fusion = fusion monsters only.
+function dbVisibleCards()
+ local out={}
+ for _,slug in ipairs(CARD_ORDER) do
+  local cd=CARDS[slug]
+  local isFusion=cd.cat=="monster" and cd.subtype=="fusion"
+  if (DB.cur.section=="fusion")==isFusion then out[#out+1]=slug end
+ end
+ return out
+end
+
+-- pmem layout (v2): 8 bits/ID (CARD_NUM up to 255), 4 IDs per 32-bit slot.
+--   pmem 0..4 : main deck (5 slots * 4 IDs = MAX_DECK 20)
+--   pmem 5    : extra deck (4 IDs = MAX_EXTRA 4)
+--   pmem 6    : DECK_PMEM_MAGIC version marker; mismatch -> load as empty
+--               (covers both uninitialized carts and old 6-bit-format saves).
+DECK_PMEM_MAGIC=0xD80D0002
+
 function dbLoad()
  DB.deck={}
- for slot=0,3 do
+ DB.extra={}
+ if pmem(6)~=DECK_PMEM_MAGIC then return end
+ for slot=0,4 do
   local v=pmem(slot)
-  for b=0,4 do
-   local num=(v>>(b*6))&0x3f
+  for b=0,3 do
+   local num=(v>>(b*8))&0xff
    local slug=CARD_ORDER[num]
-   if slug then table.insert(DB.deck,slug) end
+   if slug then
+    local cd=CARDS[slug]
+    -- Defensive: never load a fusion monster into the main deck.
+    if cd and not (cd.cat=="monster" and cd.subtype=="fusion") then
+     table.insert(DB.deck,slug)
+    end
+   end
+  end
+ end
+ local v=pmem(5)
+ for b=0,(MAX_EXTRA-1) do
+  local num=(v>>(b*8))&0xff
+  local slug=CARD_ORDER[num]
+  if slug then
+   local cd=CARDS[slug]
+   if cd and cd.cat=="monster" and cd.subtype=="fusion" then
+    table.insert(DB.extra,slug)
+   end
   end
  end
 end
@@ -35,19 +71,27 @@ end
 function dbSave()
  local nums={}
  for i=1,MAX_DECK do nums[i]=CARD_NUM[DB.deck[i]] or 0 end
- for slot=0,3 do
+ for slot=0,4 do
   local v=0
-  for b=0,4 do
-   local idx=slot*5+b+1
-   if idx<=MAX_DECK then v=v|(nums[idx]<<(b*6)) end
+  for b=0,3 do
+   local idx=slot*4+b+1
+   if idx<=MAX_DECK then v=v|(nums[idx]<<(b*8)) end
   end
   pmem(slot,v)
  end
+ local enums={}
+ for i=1,MAX_EXTRA do enums[i]=CARD_NUM[DB.extra[i]] or 0 end
+ local v=0
+ for b=0,(MAX_EXTRA-1) do
+  v=v|(enums[b+1]<<(b*8))
+ end
+ pmem(5,v)
+ pmem(6,DECK_PMEM_MAGIC)
 end
 
 function startDeckBuild()
  sync(3,1,false)
- DB={deck={},cur={panel=1,row=0,col=0},listSel=1,listScr=0,menu=nil,info=nil}
+ DB={deck={},extra={},cur={panel=1,row=0,col=0,section="main"},listSel=1,listScr=0,menu=nil,info=nil}
  dbLoad()
  SCENE="deckbuild"
 end
@@ -95,6 +139,7 @@ function drawDBInfo(cd)
  local function typeInfo(c)
   if c.cat=="spell" then return "SPELL",CSP end
   if c.cat=="trap"  then return "TRAP",CTR end
+  if c.subtype=="fusion" then return "FUSION MONSTER",CFU end
   if c.effect then return "EFFECT MONSTER",CME end
   return "NORMAL MONSTER",CCA
  end
@@ -129,15 +174,23 @@ end
 
 function drawDeckBuild()
  cls(CB)
- -- Left panel header
- print("DECK "..(#DB.deck).."/"..MAX_DECK,2,1,CT,true,1,false)
+ local isFusion=(DB.cur.section=="fusion")
+ local arr=isFusion and DB.extra or DB.deck
+ -- Left panel header (section-aware)
+ if isFusion then
+  print("FUSION "..(#DB.extra).."/"..MAX_EXTRA,2,1,CFU,true,1,false)
+ else
+  print("DECK "..(#DB.deck).."/"..MAX_DECK,2,1,CT,true,1,false)
+ end
  line(0,8,DB_LX-2,8,CD)
- -- Deck grid (4x5 = 20 slots)
- for r=0,DB_ROWS-1 do
+ -- Deck grid: 4x5 for main, 4x1 for fusion (only top row used). Up/down at the
+ -- top of fusion or bottom of main scrolls between sections.
+ local rows=isFusion and 1 or DB_ROWS
+ for r=0,rows-1 do
   for c=0,DB_COLS-1 do
    local si=r*DB_COLS+c+1
    local x,y=dbGridX(c),dbGridY(r)
-   local id=DB.deck[si]
+   local id=arr[si]
    if id then
     drawHandPlr(x,y,makeCard(id))
    else
@@ -149,17 +202,20 @@ function drawDeckBuild()
    end
   end
  end
+ -- Scroll-down hint to the fusion section (centered below the main grid).
+ if not isFusion then tri(42,125,45,125,43,127,CT) end
  -- Panel separator
- line(DB_LX-1,0,DB_LX-1,SH-9,CD)
+ line(DB_LX-1,0,DB_LX-1,SH-8,CD)
  -- Right panel header
- print("CARDS",DB_LX+2,1,CCR,true,1,false)
+ print(isFusion and "FUSION POOL" or "CARDS",DB_LX+2,1,CCR,true,1,false)
  line(DB_LX,8,SW-1,8,CD)
- -- Card list
+ -- Card list filtered by section (main = non-fusion; fusion = fusion only)
+ local visible=dbVisibleCards()
  local lx=DB_LX+1
  for i=1,DB_LIST_VIS do
   local ci=DB.listScr+i
-  if ci>#CARD_ORDER then break end
-  local slug=CARD_ORDER[ci]
+  if ci>#visible then break end
+  local slug=visible[ci]
   local cd=CARDS[slug]
   local iy=9+(i-1)*DB_LIST_RH
   local isSel=(DB.cur.panel==2 and DB.listSel==ci)
@@ -167,21 +223,21 @@ function drawDeckBuild()
   if cd.spr then spr(cd.spr,lx,iy,-1,1,0,0,1,1) end
   local nm=#cd.name>18 and string.sub(cd.name,1,18)..".." or cd.name
   print(nm,lx+9,iy+1,isSel and CB or CT,true,1,false)
-  local cnt=dbCountInDeck(slug)
+  local cnt=dbCountIn(arr,slug)
   local cc=(cnt>=MAX_COPIES) and CAT or (cnt>0 and CCR or CD)
   print("x"..cnt,SW-18,iy+1,cc,true,1,false)
  end
  -- Scrollbar (only if list overflows visible area)
- if #CARD_ORDER>DB_LIST_VIS then
+ if #visible>DB_LIST_VIS then
   local bh=DB_LIST_VIS*DB_LIST_RH
-  local pct=DB.listScr/math.max(1,#CARD_ORDER-DB_LIST_VIS)
+  local pct=DB.listScr/math.max(1,#visible-DB_LIST_VIS)
   rect(SW-3,9,2,bh,CB)
   rect(SW-3,9+math.floor(pct*(bh-4)),2,4,CD)
  end
  -- Bottom hint bar
- line(0,SH-8,SW-1,SH-8,CD)
+ line(0,SH-7,SW-1,SH-7,CD)
  if not DB.menu then
-  print("arrows:move  A:action  B:save",2,SH-6,CD,true,1,true)
+  print("arrows:move  A:action  B:save",2,SH-5,CD,true,1,true)
  end
  -- Action/save menu overlay (centered)
  if DB.menu then
@@ -207,11 +263,23 @@ end
 function dbExecAction(key,ctx)
  if key=="cancel" then return
  elseif key=="remove" and ctx then
-  if ctx.slotIdx then table.remove(DB.deck,ctx.slotIdx) end
+  if ctx.slotIdx then
+   local arr=(ctx.section=="fusion") and DB.extra or DB.deck
+   table.remove(arr,ctx.slotIdx)
+  end
  elseif key=="addtodeck" and ctx then
   local id=ctx.cardId
-  if id and #DB.deck<MAX_DECK and dbCountInDeck(id)<MAX_COPIES then
-   table.insert(DB.deck,id)
+  if not id then return end
+  local cd=CARDS[id]
+  local isFusion=cd and cd.cat=="monster" and cd.subtype=="fusion"
+  if ctx.section=="fusion" then
+   if isFusion and #DB.extra<MAX_EXTRA and dbCountIn(DB.extra,id)<MAX_COPIES then
+    table.insert(DB.extra,id)
+   end
+  else
+   if not isFusion and #DB.deck<MAX_DECK and dbCountIn(DB.deck,id)<MAX_COPIES then
+    table.insert(DB.deck,id)
+   end
   end
  elseif key=="info" and ctx then
   if ctx.cardId then DB.info=CARDS[ctx.cardId] end
@@ -249,16 +317,31 @@ function handleDeckBuildInput()
   }}
  end
  if c.panel==1 then
-  if btnp(0,20,4) then c.row=math.max(0,c.row-1)
-  elseif btnp(1,20,4) then c.row=math.min(DB_ROWS-1,c.row+1)
+  local isFusion=(c.section=="fusion")
+  local lastRow=isFusion and 0 or (DB_ROWS-1)
+  if btnp(0,20,4) then
+   if isFusion and c.row==0 then
+    c.section="main"; c.row=DB_ROWS-1
+    DB.listSel=1; DB.listScr=0  -- list filter changes; reset
+   else
+    c.row=math.max(0,c.row-1)
+   end
+  elseif btnp(1,20,4) then
+   if (not isFusion) and c.row==DB_ROWS-1 then
+    c.section="fusion"; c.row=0
+    DB.listSel=1; DB.listScr=0
+   else
+    c.row=math.min(lastRow,c.row+1)
+   end
   elseif btnp(2) then c.col=math.max(0,c.col-1)
   elseif btnp(3) then
    if c.col<DB_COLS-1 then c.col=c.col+1 else c.panel=2 end
   elseif btnp(4) then
+   local arr=isFusion and DB.extra or DB.deck
    local si=c.row*DB_COLS+c.col+1
-   local id=DB.deck[si]
+   local id=arr[si]
    if id then
-    DB.menu={sel=1,ctx={type="deck",slotIdx=si,cardId=id},items={
+    DB.menu={sel=1,ctx={type="deck",slotIdx=si,cardId=id,section=c.section},items={
      {"REMOVE",  "remove"},
      {"INFO",    "info"},
      {"CANCEL",  "cancel"},
@@ -266,19 +349,22 @@ function handleDeckBuildInput()
    end
   elseif btnp(5) then openSaveMenu() end
  else
+  local visible=dbVisibleCards()
   if btnp(0,20,4) then
    DB.listSel=math.max(1,DB.listSel-1)
    if DB.listSel<=DB.listScr then DB.listScr=math.max(0,DB.listScr-1) end
   elseif btnp(1,20,4) then
-   DB.listSel=math.min(#CARD_ORDER,DB.listSel+1)
+   DB.listSel=math.min(#visible,DB.listSel+1)
    if DB.listSel>DB.listScr+DB_LIST_VIS then DB.listScr=DB.listScr+1 end
   elseif btnp(2) then c.panel=1
   elseif btnp(4) then
-   DB.menu={sel=1,ctx={type="list",cardId=CARD_ORDER[DB.listSel]},items={
-    {"ADD TO DECK","addtodeck"},
-    {"INFO",       "info"},
-    {"CANCEL",     "cancel"},
-   }}
+   if visible[DB.listSel] then
+    DB.menu={sel=1,ctx={type="list",cardId=visible[DB.listSel],section=c.section},items={
+     {"ADD TO DECK","addtodeck"},
+     {"INFO",       "info"},
+     {"CANCEL",     "cancel"},
+    }}
+   end
   elseif btnp(5) then openSaveMenu() end
  end
 end

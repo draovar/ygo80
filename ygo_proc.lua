@@ -74,6 +74,30 @@ function procBusy()
  return false
 end
 
+function procBusyReason()
+ if not G.proc then return "no proc" end
+ if #G.proc.frames>0 then
+  local f=G.proc.frames[#G.proc.frames]
+  local w=f.wait
+  if not w then return "frame#"..#G.proc.frames.." running" end
+  if w.kind=="anim" then
+   return "frame#"..#G.proc.frames.." wait:anim done="..tostring(w.done and w.done.value)
+  end
+  if w.kind=="choose" then
+   local req=w.req or {}
+   return "frame#"..#G.proc.frames.." wait:choose kind="..tostring(req.kind)..
+          " plr="..tostring(req.plr).." result="..tostring(w.result)
+  end
+  return "frame#"..#G.proc.frames.." wait:"..tostring(w.kind)
+ end
+ if #G.proc.pending>0 then return "pending#"..#G.proc.pending end
+ if G.proc.currentChoice then
+  local cc=G.proc.currentChoice
+  return "currentChoice kind="..tostring(cc.kind).." plr="..tostring(cc.plr)
+ end
+ return "idle?"
+end
+
 -- ============================================================
 -- TICK  (call once per TIC frame, before drawChain/drawModeBanner)
 -- ============================================================
@@ -179,6 +203,13 @@ end
 -- it, drives the UI, and calls procAnswerChoice(answer) on confirm.
 function procRouteChoice(waitObj)
  local req=waitObj.req
+ -- Simulation answers everything inline (see simAnswer): no UI, no frame
+ -- delay, and the opponent's hidden responders stay silent.
+ if G.sim then
+  waitObj.result=simAnswer(req)
+  G.proc.currentChoice=nil
+  return
+ end
  -- Random kinds (coin/dice) play a popup animation and feed the result back
  -- via the addAnim onDone callback. Same path for both players — the popup
  -- is visual feedback, not interactive.
@@ -204,8 +235,13 @@ function procRouteChoice(waitObj)
   return
  end
  if req.plr==2 then
-  local ans=aiAnswer(req)
-  waitObj.result=(ans==nil) and false or ans   -- false != nil
+  local ok,ans=pcall(aiAnswer,req)
+  if not ok then
+   trace("aiAnswer ERROR kind="..tostring(req.kind).." err="..tostring(ans))
+   ans=nil
+  end
+  if ans==nil then ans=false end
+  waitObj.result=ans
   G.proc.currentChoice=nil
  else
   G.proc.currentChoice=req
@@ -299,6 +335,16 @@ function procRouteChoice(waitObj)
    else
     G.cur={side=1,row=1,col=2}
    end
+  elseif req.kind=="st_or_fs" then
+   -- Bridge kind="st_or_fs" to the sel_st_target picker (MST chained-from-set).
+   -- Source card is excluded by mstTargets. Returns {plr,kind="st"|"fs",col}.
+   local tgts=mstTargets(req.source)
+   if #tgts==0 then waitObj.result=false; G.proc.currentChoice=nil; return end
+   G.mode="sel_st_target"
+   G.stTargetSel={title=req.title,source=req.source,zone=nil,col=nil,idx=1,
+    onPick=function(side,kind,di) procAnswerChoice({plr=side,kind=kind,col=di}) end}
+   local t=tgts[1]
+   G.cur={side=t.side,row=t.row,col=t.vcol}
   end
  end
 end
@@ -307,7 +353,8 @@ end
 function procAnswerChoice(answer)
  local f=procTopFrame()
  if not f or not f.wait or f.wait.kind~="choose" then return end
- f.wait.result=(answer==nil) and false or answer
+ if answer==nil then answer=false end
+ f.wait.result=answer
  G.proc.currentChoice=nil
 end
 
@@ -322,13 +369,37 @@ function aiAnswer(req)
  if req.kind=="zone"     then return aiPickZone(req) end
  if req.kind=="zones"    then return aiPickZones(req) end
  if req.kind=="card"     then return aiPickCard(req) end
+ if req.kind=="st_or_fs" then return aiPickSTOrFS(req) end
  if req.kind=="menu"     then return req.items[1][2] end   -- pick first
  if req.kind=="yes_no"   then return false end
  if req.kind=="response" then
-  -- Default policy: activate the first matching responder. Refined per-card
-  -- via req.aiPick if a smarter policy is needed.
-  if req.options and #req.options>0 then return {optionIdx=1} end
-  return false
+  if not req.options or #req.options==0 then return false end
+  local plr=req.plr or 2
+  -- Preferred path: replay the chain from idle and compare the resulting
+  -- boards. Answers "is chaining this better than passing?" directly instead
+  -- of guessing from a per-card score.
+  local simAns=simScoreResponse(req)
+  if simAns~=nil then
+   simNoteDecision(simAns)
+   return simAns
+  end
+  -- Fallback (opponent already on the chain, or no replay origin): static
+  -- per-card scores. These can't see the resulting board, so they can't tell
+  -- that chaining to your OWN action is self-defeating -- hence the guard.
+  if req.ctx and req.ctx.actor==plr then
+   simNoteDecision(false)
+   return false
+  end
+  local ctx=aiBuildCtx(plr)
+  local bestIdx,bestScore=nil,-math.huge
+  for i,opt in ipairs(req.options) do
+   local s=scoreTrapActivate(opt.self.card,plr,ctx,req.event,req.ctx)
+   if s and s>bestScore then bestIdx,bestScore=i,s end
+  end
+  local ans=false
+  if bestIdx and bestScore>=TRAP_ACTIVATE_THRESHOLD then ans={optionIdx=bestIdx} end
+  simNoteDecision(ans)
+  return ans
  end
  return nil
 end
@@ -397,6 +468,24 @@ function aiPickCard(req)
  return bestI and {idx=bestI} or nil
 end
 
+-- Auto-pick first opp S/T, else opp FS, else own (rare). Excludes req.source.
+-- FS picks have no real col (single zone per side); we pass plr as a stand-in
+-- since the MST resolveFn ignores col for fs targets anyway.
+function aiPickSTOrFS(req)
+ local function firstST(p)
+  for c=1,3 do
+   local card=G.st[p][c]
+   if card and card~=req.source then return {plr=p,kind="st",col=c} end
+  end
+ end
+ local opp=3-req.plr
+ return firstST(opp)
+     or (G.fs[opp] and {plr=opp,kind="fs",col=opp})
+     or firstST(req.plr)
+     or (G.fs[req.plr] and {plr=req.plr,kind="fs",col=req.plr})
+     or nil
+end
+
 -- Named policies. Extend this table as cards need new AI behaviors.
 function aiNamedPolicy(name,req)
  if name=="lowestAtkOpp" then     -- Fissure: opp monster, lowest ATK
@@ -453,60 +542,65 @@ function procFlushPending()
  for _,e in ipairs(q) do raiseNow(e.event,e.ctx) end
 end
 
+-- Module-private helpers for collectListeners. Hoisted so we don't allocate
+-- 3 closures per event raise on the hot path (raise/raiseNow fire every event).
+local function _alreadyOnChain(chain,card)
+ if not chain then return false end
+ for _,L in ipairs(chain.links) do
+  if L.source==card then return true end
+ end
+ return false
+end
+local function _consider(m,o,event,ctx,chain,card,plr,zone,col)
+ if not card or _alreadyOnChain(chain,card) then return end
+ local b=BEHAVIORS[card.effect]
+ if not b or not b.listens then return end
+ local L=b.listens[event]
+ if not L then return end
+ -- Trap cards never fire from hand — must be Set on the field first.
+ -- Quick-Play spells in hand can only be activated on own turn via menu, never
+ -- as a chain response (real YGO: must be Set for at least 1 turn first).
+ if zone=="hand" and (card.cat=="trap" or card.subtype=="quickplay") then return end
+ local self={card=card,plr=plr,controller=plr,zone=zone,col=col}
+ if L.when and not L.when(self,ctx) then return end
+ local entry={
+  self=self,react=L.react,plr=plr,
+  speed=L.speed or chainSpeed(card),
+  targetCard=L.targetCard,
+  targetPick=L.targetPick,
+ }
+ if L.optional then table.insert(o,entry) else table.insert(m,entry) end
+end
+
 -- Walk every face-up field card + both hands; return (mandatory, optional)
 -- listener lists for this event.
 function collectListeners(event,ctx)
  local m,o={},{}
- -- Cards already on the chain (mid-activation) can't be activated again in
- -- the same response window — once flipped face-up by activateListener /
- -- procActivate, a card cannot chain to itself.
- local function alreadyOnChain(card)
-  if not G.proc.chain then return false end
-  for _,L in ipairs(G.proc.chain.links) do
-   if L.source==card then return true end
-  end
-  return false
- end
- local function consider(card,plr,zone,col)
-  if not card or alreadyOnChain(card) then return end
-  local b=BEHAVIORS[card.effect]
-  if not b or not b.listens then return end
-  local L=b.listens[event]
-  if not L then return end
-  -- Trap cards never fire from hand — they must be Set on the field first.
-  -- (Fixes a bug where Trap Hole / Mirror Force / etc. in hand triggered
-  -- response prompts on AI summons / attacks even though the player can't
-  -- actually activate a trap from hand.)
-  if card.cat=="trap" and zone=="hand" then return end
-  local self={card=card,plr=plr,controller=plr,zone=zone,col=col}
-  if L.when and not L.when(self,ctx) then return end
-  local entry={
-   self=self,react=L.react,plr=plr,
-   speed=L.speed or chainSpeed(card),
-  }
-  if L.optional then table.insert(o,entry) else table.insert(m,entry) end
- end
- -- Apply the face-down S/T response rules: cards Set this turn can't respond,
--- and face-down Traps can't respond while Jinzo (blocksTraps) is on the field.
--- (Face-up continuous traps still listen — staticActive's own Jinzo guard
--- handles those at query time.)
+ local chain=G.proc.chain
+ -- Face-down S/T response rules: cards Set this turn can't respond; face-down
+ -- Traps can't respond while Jinzo (blocksTraps) is up. (Face-up continuous
+ -- traps still listen — staticActive's own Jinzo guard handles those.)
  local trapsBlocked=staticActive("blocksTraps")
- local function considerST(card,p,c)
-  if not card then return end
-  if card.facedown then
-   if card.setThisTurn then return end
-   if card.cat=="trap" and trapsBlocked then return end
-  end
-  consider(card,p,"st",c)
- end
+ -- While simulating, the side being simulated against is hidden: its
+ -- face-down S/T and its hand never respond. Otherwise a simulated attack
+ -- would trip the opponent's real Mirror Force and the resulting score would
+ -- tell the AI a card it has no way of knowing.
+ local hidden=G.sim and (3-G.simActor) or nil
  for p=1,2 do
   for c=1,3 do
    local m1=G.mon[p][c]
-   if m1 and not m1.facedown then consider(m1,p,"mon",c) end
-   considerST(G.st[p][c],p,c)
+   if m1 and not m1.facedown then _consider(m,o,event,ctx,chain,m1,p,"mon",c) end
+   local st=G.st[p][c]
+   if st then
+    local skip=st.facedown and (st.setThisTurn or (st.cat=="trap" and trapsBlocked)
+                                or p==hidden)
+    if not skip then _consider(m,o,event,ctx,chain,st,p,"st",c) end
+   end
   end
-  if G.fs[p] and not G.fs[p].facedown then consider(G.fs[p],p,"fs",nil) end
-  for i,h in ipairs(G.hand[p]) do consider(h,p,"hand",i) end
+  if G.fs[p] and not G.fs[p].facedown then _consider(m,o,event,ctx,chain,G.fs[p],p,"fs",nil) end
+  if p~=hidden then
+   for i,h in ipairs(G.hand[p]) do _consider(m,o,event,ctx,chain,h,p,"hand",i) end
+  end
  end
  -- Also consider ctx.card if it's no longer on the field — handles the
  -- "when this card is destroyed/tributed" patterns where the trigger source
@@ -524,7 +618,7 @@ function collectListeners(event,ctx)
    end
    if found then break end
   end
-  if not found then consider(ctx.card,ctx.plr or 1,"gy",nil) end
+  if not found then _consider(m,o,event,ctx,chain,ctx.card,ctx.plr or 1,"gy",nil) end
  end
  return m,o
 end
@@ -573,34 +667,52 @@ function runResponseWindow(event,ctx)
  -- (EV_ACTIVATE) -- the original trigger window has closed.
  local curEvent,curCtx=event,ctx
  while passes<2 do
-  local _,opt=collectListeners(curEvent,curCtx)
-  local top=chainTopSpeed()
-  local mine={}
-  for _,e in ipairs(opt) do
-   if e.plr==offering and e.speed>=math.max(top,2) then
-    table.insert(mine,e)
-   end
-  end
-  if #mine==0 then
-   passes=passes+1
+  local mand,opt=collectListeners(curEvent,curCtx)
+  -- Drain mandatory triggers first (auto-fire, no prompt). SEGOC: turn-
+  -- player's go first. Fire one, re-collect (the new chain link may make
+  -- more triggers eligible or be on the chain itself), continue the loop.
+  if #mand>0 then
+   table.sort(mand,function(a,b)
+    if a.plr==b.plr then return false end
+    return a.plr==G.active
+   end)
+   local picked=mand[1]
+   subroutine(function() activateListener(picked,curEvent,curCtx) end)
+   passes=0
+   local newLink=G.proc.chain.links[#G.proc.chain.links]
+   curEvent=EV_ACTIVATE
+   curCtx={card=picked.self.card,controller=picked.plr,
+           actor=picked.plr,link=newLink}
+   offering=3-picked.plr
   else
-   local ans=choose{
-    kind="response",plr=offering,
-    event=curEvent,ctx=curCtx,options=mine,
-   }
-   if not ans then
+   local top=chainTopSpeed()
+   local mine={}
+   for _,e in ipairs(opt) do
+    if e.plr==offering and e.speed>=math.max(top,2) then
+     table.insert(mine,e)
+    end
+   end
+   if #mine==0 then
     passes=passes+1
    else
-    passes=0
-    local picked=mine[ans.optionIdx or 1]
-    subroutine(function() activateListener(picked,curEvent,curCtx) end)
-    local newLink=G.proc.chain.links[#G.proc.chain.links]
-    curEvent=EV_ACTIVATE
-    curCtx={card=picked.self.card,controller=picked.plr,
-            actor=picked.plr,link=newLink}
+    local ans=choose{
+     kind="response",plr=offering,
+     event=curEvent,ctx=curCtx,options=mine,
+    }
+    if not ans then
+     passes=passes+1
+    else
+     passes=0
+     local picked=mine[ans.optionIdx or 1]
+     subroutine(function() activateListener(picked,curEvent,curCtx) end)
+     local newLink=G.proc.chain.links[#G.proc.chain.links]
+     curEvent=EV_ACTIVATE
+     curCtx={card=picked.self.card,controller=picked.plr,
+             actor=picked.plr,link=newLink}
+    end
    end
+   offering=3-offering
   end
-  offering=3-offering
  end
  resolveChainStack()
 end
@@ -659,13 +771,14 @@ end
 -- actual on-chain link reference (needed by cards like Magic Jammer that
 -- iterate G.proc.chain.links to find themselves). Default react is
 -- applyResolve(card,plr,nil) when reactFn is nil.
-function procActivate(card,plr,zone,col,reactFn)
+function procActivate(card,plr,zone,col,reactFn,target)
  procPushFrame(function()
   card.facedown=false
   playActivateAnim(card,plr,zone,col)
   local link={
    source=card,controller=plr,speed=chainSpeed(card),
    sourceLoc={zone=zone,plr=plr,col=col},
+   target=target,
   }
   link.react=function()
    if reactFn then reactFn(link) else applyResolve(card,plr,nil) end
@@ -742,22 +855,6 @@ function mstTargets(source)
  return list
 end
 
--- Generic picker: opts = {title, resolveFn(targetPlr,kind,targetDi)}.
-function pickSTOrFSThenActivate(col,card,ctx,zone,opts)
- local tgts=mstTargets(card)
- if #tgts==0 then G.mode="free"; return end
- G.mode="sel_st_target"
- G.stTargetSel={title=opts.title,source=card,zone=zone,col=col,idx=1,
-  onPick=function(targetPlr,kind,targetDi)
-   pushActivationLink({card=card,col=col,zone=zone,plr=1,
-                        targets={plr=targetPlr,kind=kind,col=targetDi}},function()
-    opts.resolveFn(targetPlr,kind,targetDi)
-   end)
-  end}
- local t=tgts[1]
- G.cur={side=t.side,row=t.row,col=t.vcol}
-end
-
 -- Convert a listener (from collectListeners) into a chain link and push it.
 -- Called by runResponseWindow when a player chooses to activate a responder.
 -- The animation matches procActivate so direct activations and chained
@@ -768,13 +865,27 @@ function activateListener(listener,event,ctx)
  local plr=listener.self.plr
  local col=listener.self.col
  if card.facedown and zone=="st" then card.facedown=false end
+ -- Interactive pre-pick (yields choose{} for the player). Runs BEFORE pushLink
+ -- so link.target carries the chosen target; counter cards in the EV_ACTIVATE
+ -- response window (Dark Illusion) can then inspect it. If targetPick returns
+ -- nil the activation is cancelled — no link pushed, no react.
+ local picked,params
+ if listener.targetPick then
+  picked=listener.targetPick(listener.self,ctx)
+  if not picked then return end
+  params=picked.params
+ end
+ local target=(picked and picked.target)
+           or (listener.targetCard and listener.targetCard(listener.self,ctx))
+           or nil
  playActivateAnim(card,plr,zone,col)
  pushLink{
   source=card,
   controller=listener.plr,
   speed=listener.speed,
   sourceLoc={zone=zone,plr=plr,col=col},
-  react=function() listener.react(listener.self,ctx) end,
+  target=target,
+  react=function() listener.react(listener.self,ctx,params) end,
  }
 end
 
@@ -810,6 +921,30 @@ function spendLink(link)
    if h==link.source then discardFromHand(loc.plr,i,"effect"); break end
   end
  end
+end
+
+-- Find counter card's own link on the chain, flag the link directly below it
+-- as negated, and destroy that link's source according to its sourceLoc.zone.
+-- Used by counter-trap reacts (Magic Jammer, Seven Tools, Dark Illusion).
+function negateLinkBelow(selfCard,actorPlr)
+ local links=G.proc.chain.links
+ local n=#links
+ -- Fast path: counter cards push their own link last, so it's almost always
+ -- on top. Falls back to a reverse scan only on the rare case it isn't.
+ local myIdx=(links[n] and links[n].source==selfCard) and n or nil
+ if not myIdx then
+  for i=n-1,1,-1 do
+   if links[i].source==selfCard then myIdx=i; break end
+  end
+ end
+ if not myIdx or myIdx<=1 then return end
+ local target=links[myIdx-1]
+ target.negated=true
+ local loc=target.sourceLoc
+ local z=loc and loc.zone
+ if     z=="st"  then revealAndDestroyST(loc.plr,loc.col)
+ elseif z=="fs"  then sendFieldSpellToGY(loc.plr,"effect",actorPlr)
+ elseif z=="mon" then sendMonsterToGY(loc.plr,loc.col,"effect") end
 end
 
 -- ============================================================

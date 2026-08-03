@@ -10,8 +10,9 @@ end
 
 function makeCard(id)
  local d=CARDS[id]
- return {name=d.name,atk=d.atk,def=d.def,lvl=d.lvl,pos=1,spr=d.spr,
-         cat=d.cat or "monster",attr=d.attr,type=d.type,subtype=d.subtype,effect=d.effect,desc=d.desc}
+ return {id=id,name=d.name,atk=d.atk,def=d.def,lvl=d.lvl,pos=1,spr=d.spr,
+         cat=d.cat or "monster",attr=d.attr,type=d.type,subtype=d.subtype,effect=d.effect,desc=d.desc,
+         materials=d.materials}
 end
 
 -- Build a token monster card (no CARDS entry — token-creating spells call
@@ -151,6 +152,15 @@ function hasMonsters(plr)
  return G.mon[plr][1] or G.mon[plr][2] or G.mon[plr][3]
 end
 
+-- True if plr controls any face-up monster (optionally matching filter(m,plr,col)).
+function hasFaceUpMonster(plr,filter)
+ for c=1,3 do
+  local m=G.mon[plr][c]
+  if m and not m.facedown and (not filter or filter(m,plr,c)) then return true end
+ end
+ return false
+end
+
 -- Shallow copy of a card table
 function copyCard(card)
  local c={}
@@ -251,7 +261,7 @@ function animTribute(zones,onDone)
  addAnim(30,function(t,f)
   local rot=(4-(t//8)%4)%4
   for _,z in ipairs(zones) do
-   spr(SPR_SWORD,z.x+3,z.y+3,0,1,0,rot,2,2)
+   spr(SPR_TRIB,z.x+3,z.y+3,0,1,0,rot,2,2)
   end
  end,onDone)
 end

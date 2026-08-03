@@ -14,14 +14,26 @@
 --                      that responds to a game event. See ygo_proc.lua for the
 --                      8 events (PHASE/SUMMON/FLIP/ATTACK/BEFORE_DAMAGE/
 --                      DESTROYED/TRIBUTED/ACTIVATE) and the coroutine protocol.
---   resolve(plr,ctx)   default react body for direct activations (the chain
---                      link's react = applyResolve(card,plr,nil) when no
---                      explicit react is supplied to procActivate)
+--   resolve(plr,ctx)   effect with no decisions taken at activation time; the
+--                      chain link's default react. May still choose{} from
+--                      inside (it runs in a coroutine frame -- see flute).
 --   canActivate(card)  predicate gating manual activation from the menu
---   activate(opts)     custom activation flow (target-pickers etc.);
---                      opts = {col,card,zone,plr,trigCtx}.
---                      When absent, the default flow runs procActivate.
---   aiCanCast(card)    AI: cast this spell from hand this turn?
+--   activate(opts)     effect with decisions taken AT activation, so the chain
+--                      link can carry a target. opts = {col,card,zone,plr}.
+--                      Drives choose{} for opts.plr and must never name
+--                      player 1 -- the AI runs this same hook.
+--   Never both: a card carrying resolve AND activate is mid-migration and the
+--   AI stays on resolve (see dispatchActivate in ygo_intent.lua).
+--   ai{}               NOT needed for the AI to use a card. The AI picks moves
+--                      by simulating them through this same code and scoring
+--                      the resulting board (ygo_sim.lua), so a card becomes
+--                      AI-usable the moment it works for the player.
+--                      One hook remains:
+--                        scoreActivate(card,plr,ctx,event,eventCtx)
+--                      Used only when the AI must answer a response window
+--                      that replay cannot reproduce -- i.e. the opponent chose
+--                      to chain into it. Optional; no hook = never activated
+--                      on that fallback path.
 --   atkBonus(card)     per-card ATK bonus (Dark Magician Girl, Buster Blader)
 --   defBonus(card)     per-card DEF bonus (Gravekeeper's Shaman)
 --   equipBonus(tgt,eq) per-equip stat bonus -> ab,db
@@ -70,10 +82,61 @@ function sweepTrapHook(name)
  end end
 end
 
+-- Quick-play / generic-response listener helper. Builds a single shared
+-- `entry` and registers it for all 4 opp-action events (SUMMON/FLIP/ATTACK/
+-- ACTIVATE) — the pattern used by Enemy Controller, Ring of Destruction, MST,
+-- Graceful Dice. Each card still defines its own `when` (typically checking
+-- G.active==opp + per-card validity).
+function quickPlayListens(entry)
+ return {SUMMON=entry,FLIP=entry,ATTACK=entry,ACTIVATE=entry}
+end
+
+-- Toggle ATK <-> DEF position and mark posChanged (blocks the once-per-turn
+-- CHANGE_POS intent the same turn). Used by Enemy Controller, Gravekeeper's
+-- Assailant. No effect on facedown monsters — callers should gate face-down
+-- via flipEvent path instead.
+function togglePosition(m)
+ m.pos=(m.pos==1) and 2 or 1
+ m.posChanged=true
+end
+
+-- Boolean variant of mstTargets — early-exits on the first valid S/T or FS
+-- target excluding `source`. Cheaper than building the full target list when
+-- only a yes/no answer is needed (MST listener `when`, etc.).
+function mstHasTarget(source)
+ for p=1,2 do
+  for c=1,3 do
+   if G.st[p][c] and G.st[p][c]~=source then return true end
+  end
+  if G.fs[p] and G.fs[p]~=source then return true end
+ end
+ return false
+end
+
+-- Shared AI policy for "bounce/destroy one monster, prefer opp's strongest,
+-- fall back to own weakest targetable". Used by Maneater Bug and GK Guard.
+-- score(m) defaults to facedown=3000 (speculative) else (pos==1) atk else def.
+function aiPickBounceTarget(selfPlr,opp,scoreFn)
+ scoreFn=scoreFn or function(m)
+  return m.facedown and 3000 or ((m.pos==1) and (m.atk or 0) or (m.def or 0))
+ end
+ local best,bestK=-1,nil
+ for c=1,3 do
+  local m=G.mon[opp][c]
+  if m and canTargetMon(m) then
+   local s=scoreFn(m)
+   if s>best then best=s; bestK={plr=opp,col=c} end
+  end
+ end
+ if bestK then return bestK end
+ for c=1,3 do
+  if canTargetMon(G.mon[selfPlr][c]) then return {plr=selfPlr,col=c} end
+ end
+end
+
 BEHAVIORS={
  -- =============== SPELLS ===============
  darkhole={
-  aiCanCast=function() return hasMonsters(1) or hasMonsters(2) end,
   resolve=function(plr)
    for i=1,3 do for p=1,2 do
     if G.mon[p][i] then revealAndDestroyMon(p,i,"effect") end
@@ -82,7 +145,6 @@ BEHAVIORS={
   end,
  },
  raigeki={
-  aiCanCast=function() return hasMonsters(1) end,
   resolve=function(plr)
    local opp=3-plr
    for i=1,3 do
@@ -92,8 +154,7 @@ BEHAVIORS={
   end,
  },
  fissure={
-  canActivate=function() return hasTargetableMon(2) end,
-  aiCanCast=function() return hasTargetableMon(1) end,
+  canActivate=function(card,plr) return hasTargetableMon(3-(plr or 1)) end,
   resolve=function(plr)
    local opp=3-plr
    local low,lowI=math.huge,nil
@@ -107,7 +168,6 @@ BEHAVIORS={
   end,
  },
  ookazi={
-  aiCanCast=function() return true end,
   resolve=function(plr) changeLp(3-plr,-800) end,
  },
  unitedwestand={
@@ -119,61 +179,76 @@ BEHAVIORS={
    return n*800,n*800
   end,
  },
- mst={
-  -- Quick-Play Spell (speed 2 derived from subtype=quickplay).
-  canActivate=function(card) return #mstTargets(card)>0 end,
-  activate=function(opts)
-   pickSTOrFSThenActivate(opts.col,opts.card,opts.trigCtx,opts.zone,{
-    title=(opts.zone=="hand") and "MST" or "MST (CHAINED)",
-    resolveFn=function(tplr,kind,di)
-     if kind=="fs" then
-      if G.fs[tplr] then sendFieldSpellToGY(tplr,"effect",1) end
-     elseif G.st[tplr][di] then revealAndDestroyST(tplr,di) end
+ mst=(function()
+  -- Quick-Play. Player manual cast OR set face-down + chained response on
+  -- opp's turn. AI casts via ai.scoreCast (uses field state) when own turn.
+  local function applyDestroy(tplr,kind,di,actor)
+   if kind=="fs" then
+    if G.fs[tplr] then sendFieldSpellToGY(tplr,"effect",actor) end
+   elseif G.st[tplr][di] then revealAndDestroyST(tplr,di) end
+   end
+  local function mstWhen(self,ctx)
+   return G.active==(3-self.plr) and mstHasTarget(self.card)
+  end
+  local function mstReact(self,ctx)
+   local ans=choose{kind="st_or_fs",plr=self.plr,source=self.card,title="MST (CHAINED)"}
+   if not ans then return end
+   applyDestroy(ans.plr,ans.kind,ans.col,self.plr)
+  end
+  return {
+   canActivate=function(card,plr) return mstHasTarget(card) end,
+   activate=function(opts)
+    local card,col,zone=opts.card,opts.col,opts.zone
+    local plr=opts.plr or 1
+    procPushFrame(function()
+     local ans=choose{kind="st_or_fs",plr=plr,source=card,
+      title=(zone=="hand") and "MST" or "MST (CHAINED)"}
+     if not ans then return end
+     pushActivationLink({card=card,col=col,zone=zone,plr=plr},function()
+      applyDestroy(ans.plr,ans.kind,ans.col,plr)
+     end)
+    end)
+   end,
+   listens=quickPlayListens{optional=true,speed=2,when=mstWhen,react=mstReact},
+   ai={
+    scoreActivate=function(card,plr,ctx,event,eventCtx)
+     local oppSt=0
+     for c=1,3 do if G.st[3-plr][c] then oppSt=oppSt+1 end end
+     return 100+oppSt*80+(G.fs[3-plr] and 100 or 0)
     end,
-   })
-  end,
- },
+   },
+  }
+ end)(),
  stampingdestruction={
-  canActivate=function(card) return controlsDragon(1) and #mstTargets(card)>0 end,
-  aiCanCast=function()
-   if not controlsDragon(2) then return false end
-   for c=1,3 do if G.st[1][c] then return true end end
-   return G.fs[1]~=nil
-  end,
+  canActivate=function(card,plr) return controlsDragon(plr or 1) and mstHasTarget(card) end,
   activate=function(opts)
-   pickSTOrFSThenActivate(opts.col,opts.card,opts.trigCtx,opts.zone,{
-    title="STAMPING DESTRUCTION",
-    resolveFn=function(tplr,kind,di)
-     if kind=="fs" then
-      if G.fs[tplr] then
-       sendFieldSpellToGY(tplr,"effect",1); changeLp(tplr,-500)
+   local card,col,zone=opts.card,opts.col,opts.zone
+   local plr=opts.plr or 1
+   procPushFrame(function()
+    local ans=choose{kind="st_or_fs",plr=plr,source=card,
+     title="STAMPING DESTRUCTION"}
+    if not ans then return end
+    pushActivationLink({card=card,col=col,zone=zone,plr=plr},function()
+     if ans.kind=="fs" then
+      if G.fs[ans.plr] then
+       sendFieldSpellToGY(ans.plr,"effect",plr); changeLp(ans.plr,-500)
       end
-     elseif G.st[tplr][di] then
-      revealAndDestroyST(tplr,di); changeLp(tplr,-500)
+     elseif G.st[ans.plr][ans.col] then
+      revealAndDestroyST(ans.plr,ans.col); changeLp(ans.plr,-500)
      end
-    end,
-   })
-  end,
-  resolve=function(plr)  -- AI: destroy first opp S/T, else opp FS
-   local opp=3-plr
-   for c=1,3 do
-    if G.st[opp][c] then
-     revealAndDestroyST(opp,c); changeLp(opp,-500); return
-    end
-   end
-   if G.fs[opp] then
-    sendFieldSpellToGY(opp,"effect",plr); changeLp(opp,-500)
-   end
+    end)
+   end)
   end,
  },
  potofgreed={
-  aiCanCast=function() return #G.deck[2]>0 and #G.hand[2]<MAX_HAND end,
+  canActivate=function(card,plr) plr=plr or 1; return #G.deck[plr]>0 and #G.hand[plr]<MAX_HAND end,
   resolve=function(plr) drawCard(plr); drawCard(plr) end,
  },
- gracefuldice={
-  canActivate=function() return hasMonsters(1) end,
-  aiCanCast =function() return hasMonsters(2) end,
-  resolve=function(plr)
+ gracefuldice=(function()
+  -- Quick-Play. Roll d6, add result*100 to own face-up monsters' ATK/DEF
+  -- (turn-scoped). Player activates via menu (own turn) OR via response
+  -- window during opp's action (set face-down quick-play timing).
+  local function applyBuff(plr)
    local r=choose{kind="dice"}
    if not r then return end
    local boost=r*100
@@ -183,16 +258,126 @@ BEHAVIORS={
      addTurnMod(m,"atk",boost); addTurnMod(m,"def",boost)
     end
    end
-  end,
- },
- gianttrunade={
-  aiCanCast=function()
-   for p=1,2 do
-    for c=1,3 do if G.st[p][c] then return true end end
-    if G.fs[p] then return true end
+  end
+  local function gdWhen(self,ctx)
+   return G.active==(3-self.plr) and hasMonsters(self.plr)
+  end
+  return {
+   canActivate=function(card,plr) return hasMonsters(plr or 1) end,
+   resolve=function(plr) applyBuff(plr) end,
+   listens=quickPlayListens{optional=true,speed=2,when=gdWhen,
+    react=function(self,ctx) applyBuff(self.plr) end},
+   ai={
+    scoreActivate=function(card,plr,ctx,event,eventCtx)
+     return ctx.ownFaceUp>0 and 250 or 0
+    end,
+   },
+  }
+ end)(),
+ enemycontroller=(function()
+  -- Quick-Play. Two activation paths share the picker/applier helpers:
+  --   * activate(opts) - manual cast on own turn, either player. Pre-picks +
+  --     procActivate with target on link (lets Dark Illusion negate).
+  --   * listens entry - set face-down EC offered as a response during any opp
+  --     action on opp's turn (SUMMON/FLIP/ATTACK/ACTIVATE). Chains at SS2; on
+  --     opp's attack, flipping the attacker to DEF cancels via DECLARE_ATTACK's
+  --     `attacker.pos~=1` re-check. Listener chain link has target=nil (picked
+  --     in react), so Dark Illusion can't negate this path.
+  local function ecPick(plr)
+   local opp=3-plr
+   local items={{"CHANGE POS","pos"}}
+   if hasMonsters(plr) then items[#items+1]={"TAKE CONTROL","control"} end
+   local effect=choose{kind="menu",plr=plr,forced=true,items=items}
+   if not effect then return nil end
+   if effect=="pos" then
+    local target=choose{
+     kind="zone",plr=plr,side=opp,row="mon",title="EC: CHANGE POS",
+     filter=function(c) return c and not c.facedown end,
+    }
+    if not target then return nil end
+    local targetCard=G.mon[target.plr][target.col]
+    if not targetCard or targetCard.facedown then return nil end
+    return effect,{targetPlr=target.plr,targetCol=target.col,targetCard=targetCard}
+   else
+    local trib=choose{
+     kind="zone",plr=plr,side=plr,row="mon",title="EC: TRIBUTE",
+     filter=function(c) return c~=nil end,
+    }
+    if not trib then return nil end
+    local target=choose{
+     kind="zone",plr=plr,side=opp,row="mon",title="EC: TAKE CONTROL",
+     filter=function(c) return c and not c.facedown end,
+    }
+    if not target then return nil end
+    local targetCard=G.mon[opp][target.col]
+    if not targetCard or targetCard.facedown then return nil end
+    return effect,{tribCol=trib.col,targetCol=target.col,targetCard=targetCard}
    end
-   return false
-  end,
+  end
+  local function ecApply(plr,effect,p)
+   local opp=3-plr
+   if effect=="pos" then
+    local m=G.mon[p.targetPlr] and G.mon[p.targetPlr][p.targetCol]
+    if m==p.targetCard and not m.facedown then togglePosition(m) end
+   else
+    local tribCard=G.mon[plr][p.tribCol]
+    if tribCard then
+     sendMonsterToGY(plr,p.tribCol,"tribute")
+     raise(EV_TRIBUTED,{card=tribCard,plr=plr,actor=plr})
+    end
+    local m=G.mon[opp][p.targetCol]
+    if m==p.targetCard and not m.facedown then
+     G.mon[opp][p.targetCol]=nil
+     local landCol=firstEmpty(G.mon[plr])
+     if not landCol then table.insert(G.gy[opp],m); return end
+     m.borrowedFrom=opp; m.borrowedAtTurn=G.turn
+     G.mon[plr][landCol]=m
+    end
+   end
+  end
+  local function ecWhen(self,ctx)
+   local opp=3-self.plr
+   return G.active==opp and hasFaceUpMonster(opp)
+  end
+  -- targetPick runs at activation (before link push) so link.target carries
+  -- the picked monster → Dark Illusion can negate when targeting a DARK mon.
+  local function ecTargetPick(self,ctx)
+   local effect,p=ecPick(self.plr)
+   if not effect then return nil end
+   return {target=p.targetCard,params={effect=effect,p=p}}
+  end
+  local function ecReact(self,ctx,params) ecApply(self.plr,params.effect,params.p) end
+  return {
+   canActivate=function(card,plr) return hasFaceUpMonster(3-(plr or 1)) end,
+   activate=function(opts)
+    local card,col,zone=opts.card,opts.col,opts.zone
+    local plr=opts.plr or 1
+    procPushFrame(function()
+     local effect,p=ecPick(plr)
+     if not effect then return end
+     procActivate(card,plr,zone,col,function()
+      ecApply(plr,effect,p)
+     end,p.targetCard)
+    end)
+   end,
+   listens=quickPlayListens{optional=true,speed=2,when=ecWhen,
+    targetPick=ecTargetPick,react=ecReact},
+   ai={
+    scoreActivate=function(card,plr,ctx,event,eventCtx)
+     local bestSave=0
+     for _,o in ipairs(ctx.oppMons) do
+      local m=o.card
+      if not m.facedown and m.pos==1 then
+       local save=(getMonAtk(m) or 0)-(getMonDef(m) or 0)
+       if save>bestSave then bestSave=save end
+      end
+     end
+     return 150+bestSave/4
+    end,
+   },
+  }
+ end)(),
+ gianttrunade={
   resolve=function(plr,ctx)
    local self_card=ctx and ctx.source
    for p=1,2 do
@@ -205,13 +390,10 @@ BEHAVIORS={
   end,
  },
  straylambs={
-  -- Requires 2 empty monster zones to activate (per real card).
-  canActivate=function()
-   local n=0; for c=1,3 do if not G.mon[1][c] then n=n+1 end end
-   return n>=2
-  end,
-  aiCanCast=function()
-   local n=0; for c=1,3 do if not G.mon[2][c] then n=n+1 end end
+  -- Requires 2 empty monster zones (per real card).
+  canActivate=function(card,plr)
+   plr=plr or 1
+   local n=0; for c=1,3 do if not G.mon[plr][c] then n=n+1 end end
    return n>=2
   end,
   resolve=function(plr)
@@ -226,17 +408,10 @@ BEHAVIORS={
   end,
  },
  costdown={
-  -- Cost is discarded at resolution time (consistent with MJ).
-  -- Need ≥2 hand cards: 1 to discard, ≥1 monster left to reduce.
-  canActivate=function()
-   if #G.hand[1]<2 then return false end
-   local mons=0
-   for _,c in ipairs(G.hand[1]) do if c.cat=="monster" then mons=mons+1 end end
-   return mons>=1
-  end,
-  aiCanCast=function()
-   if #G.hand[2]<2 then return false end
-   for _,c in ipairs(G.hand[2]) do
+  canActivate=function(card,plr)
+   plr=plr or 1
+   if #G.hand[plr]<2 then return false end
+   for _,c in ipairs(G.hand[plr]) do
     if c.cat=="monster" and tribsNeeded(getMonLvl(c)-2)<tribsNeeded(getMonLvl(c)) then
      return true
     end
@@ -266,110 +441,171 @@ BEHAVIORS={
   end,
  },
  swords={
-  -- Continuous Spell: stays face-up, locks the opponent's attacks (the
-  -- blocksAttack static capability — enforced via staticActive). The
-  -- swordsCounter (set on resolve) is decremented each of their End Phases
-  -- by tickSwords; the card self-destructs after the 3rd.
   static={blocksAttack=true},
-  aiCanCast=function() return hasMonsters(1) end,
   resolve=function(plr,ctx)
    if ctx and ctx.source then ctx.source.swordsCounter=3 end
   end,
  },
  thousandknives={
-  canActivate=function() return controlsDarkMagician(1) and hasTargetableMon(2) end,
-  aiCanCast =function() return controlsDarkMagician(2) and hasTargetableMon(1) end,
+  canActivate=function(card,plr) plr=plr or 1; return controlsDarkMagician(plr) and hasTargetableMon(3-plr) end,
   activate=function(opts)
-   if opts.plr==2 then
-    procActivate(opts.card,2,opts.zone,opts.col)
-    return
-   end
-   if not hasTargetableMon(2) then G.mode="free"; return end
    local card,col,zone=opts.card,opts.col,opts.zone
+   local plr=opts.plr or 1
+   local opp=3-plr
+   if not hasTargetableMon(opp) then return end
    procPushFrame(function()
     local target=choose{
-     kind="zone",plr=1,side=2,row="mon",title="THOUSAND KNIVES",
+     kind="zone",plr=plr,side=opp,row="mon",title="THOUSAND KNIVES",
      filter=function(c) return canTargetMon(c) end,
+     -- Default zone policy scores raw ATK; face-down/DEF monsters need
+     -- their DEF weighed instead.
+     aiPick=function(req)
+      local best,bestK=-1,nil
+      for c=1,3 do
+       local m=G.mon[opp][c]
+       if m and canTargetMon(m) then
+        local s=(m.pos==1 and not m.facedown) and m.atk or m.def
+        if s>best then best=s; bestK={plr=opp,col=c} end
+       end
+      end
+      return bestK
+     end,
     }
     if not target then return end
-    procActivate(card,1,zone,col,function()
-     if G.mon[target.plr][target.col] then
+    local targetCard=G.mon[target.plr][target.col]
+    procActivate(card,plr,zone,col,function()
+     if G.mon[target.plr][target.col]==targetCard then
       revealAndDestroyMon(target.plr,target.col,"effect"); checkEquips()
      end
-    end)
+    end,targetCard)
    end)
-  end,
-  resolve=function(plr)  -- AI path: destroy opponent's strongest targetable monster
-   local opp=3-plr
-   local best,bestI=-1,nil
-   for i=1,3 do
-    local m=G.mon[opp][i]
-    if m and canTargetMon(m) then
-     local s=(m.pos==1 and not m.facedown) and m.atk or m.def
-     if s>best then best=s; bestI=i end
-    end
-   end
-   if bestI then revealAndDestroyMon(opp,bestI,"effect"); checkEquips() end
   end,
  },
  monsterreborn={
-  -- Special Summon 1 monster from either GY to your field.
-  -- Player path: choose target (cross-GY) then ATK/DEF position then activate.
-  -- AI path: falls through to BEHAVIORS.resolve below (revives strongest).
-  canActivate=function() return firstEmpty(G.mon[1]) and anyGYMonster() and not staticActive("blocksGYMoves") end,
-  aiCanCast =function() return firstEmpty(G.mon[2]) and anyGYMonster() and not staticActive("blocksGYMoves") end,
+  canActivate=function(card,plr) plr=plr or 1; return firstEmpty(G.mon[plr]) and anyGYMonster() and not staticActive("blocksGYMoves") end,
   activate=function(opts)
    local card,col,zone=opts.card,opts.col,opts.zone
+   local plr=opts.plr or 1
    procPushFrame(function()
     local items=gyMonsterItems()
     if #items==0 then return end
-    local ans=choose{kind="card",plr=1,items=items,title="MONSTER REBORN"}
+    local ans=choose{kind="card",plr=plr,items=items,title="MONSTER REBORN"}
     if not ans then return end
     local gyPlr,gyIdx=ans.item.gyPlr,ans.item.gyIdx
     local key=choose{
-     kind="menu",plr=1,forced=true,
+     kind="menu",plr=plr,forced=true,
      items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}},
     }
     local pos=(key=="ss_def") and 2 or 1
-    procActivate(card,1,zone,col,function()
-     local emptyCol=firstEmpty(G.mon[1])
+    procActivate(card,plr,zone,col,function()
+     -- Re-checked here: a Necrovalley chained to this can lock the GY
+     -- between the pick and the summon.
+     if staticActive("blocksGYMoves") then return end
+     local emptyCol=firstEmpty(G.mon[plr])
      local m=emptyCol and G.gy[gyPlr][gyIdx]
      if not (emptyCol and m and m.cat=="monster") then return end
      table.remove(G.gy[gyPlr],gyIdx)
      m.pos=pos; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
      m.linkedTrap=nil
-     G.mon[1][emptyCol]=m
-     summonEvent(m,1,emptyCol,"special",nil)
+     G.mon[plr][emptyCol]=m
+     summonEvent(m,plr,emptyCol,"special",nil)
     end)
    end)
   end,
-  resolve=function(plr)  -- AI path: revive the strongest monster available
-   if staticActive("blocksGYMoves") then return end
-   local emptyCol=firstEmpty(G.mon[plr])
-   if not emptyCol then return end
-   local best,bp,bi=-1,nil,nil
-   for p=1,2 do for i,c in ipairs(G.gy[p]) do
-    if c.cat=="monster" and (c.atk or 0)>best then best=c.atk; bp=p; bi=i end
-   end end
-   if bi then
-    local m=table.remove(G.gy[bp],bi)
-    m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
-    m.linkedTrap=nil
-    G.mon[plr][emptyCol]=m
-    summonEvent(m,plr,emptyCol,"special",nil)
-   end
+ },
+ polymerization={
+  canActivate=function(card,plr) plr=plr or 1; return firstEmpty(G.mon[plr]) and #polyValidTargets(plr)>0 end,
+  activate=function(opts)
+   local card,col,zone=opts.card,opts.col,opts.zone
+   local plr=opts.plr or 1
+   procPushFrame(function()
+    -- 1) Pick the fusion target from valid ED entries.
+    local targets=polyValidTargets(plr)
+    if #targets==0 then return end
+    local fItems={}
+    for _,idx in ipairs(targets) do
+     local c=G.extra[plr][idx]
+     fItems[#fItems+1]={extraIdx=idx,card=c,name=c.name,atk=c.atk,def=c.def,lvl=c.lvl,desc=c.desc}
+    end
+    local fAns=choose{kind="card",plr=plr,items=fItems,title="POLYMERIZATION"}
+    if not fAns then return end
+    local fusionIdx=fAns.item.extraIdx
+    local fusionCard=G.extra[plr][fusionIdx]
+    -- 2) Pick each material in turn. Track consumed copies so duplicates can't
+    --    be selected twice (e.g. for hypothetical "X+X" fusions).
+    local picks={}
+    local consumed={hand={},field={}}
+    for _,matName in ipairs(fusionCard.materials) do
+     local mItems={}
+     for hi,c in ipairs(G.hand[plr]) do
+      if c.id==matName and not consumed.hand[hi] then
+       mItems[#mItems+1]={kind="hand",hi=hi,card=c,
+        name=c.name.." (H)",atk=c.atk,def=c.def,lvl=c.lvl,desc=c.desc}
+      end
+     end
+     for fc=1,3 do
+      local m=G.mon[plr][fc]
+      if m and m.id==matName and not consumed.field[fc] then
+       local tag=m.facedown and (" (F"..fc.." SET)") or (" (F"..fc..")")
+       mItems[#mItems+1]={kind="field",fc=fc,card=m,
+        name=m.name..tag,atk=m.atk,def=m.def,lvl=m.lvl,desc=m.desc}
+      end
+     end
+     if #mItems==0 then return end
+     local mAns=choose{kind="card",plr=plr,items=mItems,
+      title="POLY MATERIAL: "..(CARDS[matName] and CARDS[matName].name:upper() or matName:upper()),
+      -- Prefer a hand copy over a field copy: spending the board costs more.
+      aiPick=function(req)
+       for _,it in ipairs(req.items) do
+        if it.kind=="hand" then return {idx=it.deckIdx,item=it} end
+       end
+       return {idx=req.items[1].deckIdx,item=req.items[1]}
+      end}
+     if not mAns then return end
+     picks[#picks+1]={kind=mAns.item.kind,hi=mAns.item.hi,fc=mAns.item.fc}
+     if mAns.item.kind=="hand" then consumed.hand[mAns.item.hi]=true
+     else consumed.field[mAns.item.fc]=true end
+    end
+    -- 3) Pick position. (The land zone is auto-picked via firstEmpty at resolve
+    --    time -- the existing kind="zone" CHOOSE bridge uses the sel_destroy UI,
+    --    which only allows picking cards-on-field, not empty zones. Matches the
+    --    convention used by Monster Reborn / gkspy / Call of the Haunted.)
+    local key=choose{kind="menu",plr=plr,forced=true,
+     items={{"ATK POSITION","ss_atk"},{"DEF POSITION","ss_def"}}}
+    local pos=(key=="ss_def") and 2 or 1
+    -- 4) Activate the Polymerization chain link; at resolve, send materials
+    --    and Special Summon the Fusion. Hand picks sorted descending so the
+    --    table.remove inside discardFromHand doesn't shift earlier indices.
+    --    Materials are sent FIRST so the freed field slot can host the fusion
+    --    (e.g. when one of the materials came from a field zone).
+    procActivate(card,plr,zone,col,function()
+     -- Tribute-style sword animation over the picked materials, then send.
+     playMaterialTributeAnim(plr,picks)
+     local handIdxs,fieldCols={},{}
+     for _,p in ipairs(picks) do
+      if p.kind=="hand" then handIdxs[#handIdxs+1]=p.hi
+      else fieldCols[#fieldCols+1]=p.fc end
+     end
+     table.sort(handIdxs,function(a,b) return a>b end)
+     for _,hi in ipairs(handIdxs) do discardFromHand(plr,hi,"effect") end
+     for _,fc in ipairs(fieldCols) do sendMonsterToGY(plr,fc,"effect") end
+     local landCol=firstEmpty(G.mon[plr])
+     if not landCol then return end
+     local m=table.remove(G.extra[plr],fusionIdx)
+     if not m then return end
+     m.pos=pos; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
+     G.mon[plr][landCol]=m
+     summonEvent(m,plr,landCol,"special",nil)
+    end)
+   end)
   end,
  },
  fluteofdragon={
   -- Lord of D. required on field at activation AND at resolution.
-  canActivate=function()
-   if not staticActive("dragonProtect",1) or not firstEmpty(G.mon[1]) then return false end
-   for _,c in ipairs(G.hand[1]) do if c.type=="dragon" then return true end end
-   return false
-  end,
-  aiCanCast=function()
-   if not staticActive("dragonProtect",2) or not firstEmpty(G.mon[2]) then return false end
-   for _,c in ipairs(G.hand[2]) do if c.type=="dragon" then return true end end
+  canActivate=function(card,plr)
+   plr=plr or 1
+   if not staticActive("dragonProtect",plr) or not firstEmpty(G.mon[plr]) then return false end
+   for _,c in ipairs(G.hand[plr]) do if c.type=="dragon" then return true end end
    return false
   end,
   resolve=function(plr)
@@ -406,8 +642,6 @@ BEHAVIORS={
 
  -- =============== TRAPS ===============
  mirrorforce={
-  -- Attack cancellation falls out naturally because INTENTS.DECLARE_ATTACK's
-  -- continuation re-checks attacker survival after the chain resolves.
   responseOnly=true,
   listens={
    ATTACK={
@@ -415,8 +649,6 @@ BEHAVIORS={
     speed=2,
     when=function(self,ctx) return ctx.actor~=self.controller end,
     react=function(self,ctx)
-     -- Destroy all face-up ATK-position monsters on the attacking side
-     -- (opp = the side opposite the trap's controller).
      local opp=3-self.plr
      G.battleAnim=nil
      for i=1,3 do
@@ -426,25 +658,39 @@ BEHAVIORS={
     end,
    },
   },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    local opp=3-plr
+    local total=0
+    local score=0
+    for c=1,3 do
+     local m=G.mon[opp][c]
+     if m and not m.facedown and m.pos==1 then
+      total=total+(getMonAtk(m) or 0)
+     end
+    end
+    score = total/10
+    score = score - ctx.oppHandSize*10 
+    if ctx.ownLP<=total then score=score+50 end
+    return score
+   end,
+  },
  },
  kunaichain={
-  -- Pick one or both: change the attacker to DEF (cancels attack via the
-  -- pos check in DECLARE_ATTACK's continuation), and/or convert this card
-  -- into an equip on a face-up own monster (+500 ATK). The subtype mutation
-  -- makes spendLink keep the card face-up so it persists as an equip.
+  -- Pick one or both: change attacker to DEF, and/or convert to equip on own
+  -- monster (+500 ATK). subtype mutation makes spendLink keep it face-up as
+  -- an equip. when() subtype="normal" guard prevents re-firing post-equip.
   responseOnly=true,
   equipBonus=function() return 500,0 end,
   listens={
    ATTACK={
     optional=true,
     speed=2,
-    when=function(self,ctx) return ctx.actor~=self.controller end,
+    when=function(self,ctx)
+     return self.card.subtype=="normal" and ctx.actor~=self.controller
+    end,
     react=function(self,ctx)
-     local hasOwn=false
-     for c=1,3 do
-      local m=G.mon[self.plr][c]
-      if m and not m.facedown then hasOwn=true; break end
-     end
+     local hasOwn=hasFaceUpMonster(self.plr)
      local items={}
      if hasOwn then table.insert(items,{"BOTH","both"}) end
      table.insert(items,{"CHANGE POS","pos"})
@@ -467,6 +713,11 @@ BEHAVIORS={
     end,
    },
   },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    return getMonAtk(eventCtx.attacker) or eventCtx.attacker.atk or 0
+   end,
+  },
  },
  traphole={
   responseOnly=true,
@@ -475,17 +726,13 @@ BEHAVIORS={
     optional=true,
     speed=2,
     when=function(self,ctx)
-     -- Fires on Normal Summon AND Tribute Summon (both are NS variants);
-     -- skips Special Summons. Set monsters don't fire EV_SUMMON at all.
      return ctx.kind~="special" and not ctx.facedown
         and (ctx.card.atk or 0)>=1000
         and ctx.actor~=self.controller
         and canTargetMon(ctx.card)
     end,
+    targetCard=function(self,ctx) return ctx.card end,
     react=function(self,ctx)
-     -- Safety: refuse to destroy own controller's summon. Defense in depth
-     -- against a one-off bug where TH fired on its controller's own summon
-     -- despite the when() check. If the trace fires in normal play, investigate.
      if ctx.actor==self.controller then
       trace("TH REACT BAILED (actor==controller) — when() was bypassed somehow")
       return
@@ -496,11 +743,23 @@ BEHAVIORS={
     end,
    },
   },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    score=0
+    score = eventCtx.card.atk/10 - ctx.oppHandSize*10
+    if ctx.ownLP<=eventCtx.card.atk then score = score + 50 end
+    return score
+   end,
+  },
  },
  callhaunted={
   -- Continuous Trap. Manual activate or chain-response. Both paths share
-  -- cohSpecialSummon. Negation by Jinzo: onNegate kills the anchor monster,
-  -- onResume self-destructs if the anchor is gone.
+  -- cohSpecialSummon. Jinzo: onNegate kills anchor, onResume self-destructs.
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    return aiBestGyMonsterAtk(plr)
+   end,
+  },
   onNegate=function(card)
    if not card.linkedMon then return end
    local m=card.linkedMon
@@ -532,41 +791,16 @@ BEHAVIORS={
     react=function(self,ctx) cohSpecialSummon(self) end,
    },
   },
-  canActivate=function(card) return canReviveMonster(1) end,
+  canActivate=function(card,plr) return canReviveMonster(plr or 1) end,
   activate=function(opts)
-   if opts.plr==2 then
-    -- AI path: pick best GY monster, resolve inline (no UI).
-    procActivate(opts.card,2,"st",opts.col,function()
-     aiResolveCallHaunted(opts.col,opts.card); checkWin()
-    end)
-   else
-    -- Player path: choose GY monster, then activate with captured gyIdx.
-    local card,col=opts.card,opts.col
-    procPushFrame(function()
-     local ans=choose{
-      kind="card",plr=1,from="gy",title="CALL OF THE HAUNTED",
-      filter=function(c) return c.cat=="monster" end,
-     }
-     if not ans then return end
-     local gyIdx=ans.idx
-     procActivate(card,1,"st",col,function()
-      local emptyCol=firstEmpty(G.mon[1])
-      local m=emptyCol and G.gy[1][gyIdx]
-      if not (emptyCol and m and m.cat=="monster") then return end
-      table.remove(G.gy[1],gyIdx)
-      m.pos=1; m.facedown=false; m.attacked=false; m.summoned=false; m.posChanged=false
-      G.mon[1][emptyCol]=m
-      card.linkedMon=m; m.linkedTrap=card
-      summonEvent(m,1,emptyCol,"special",nil)
-     end)
-    end)
-   end
+   local card,col=opts.card,opts.col
+   local plr=opts.plr or 1
+   procActivate(card,plr,"st",col,function()
+    cohSpecialSummon{card=card,plr=plr,zone="st",col=col}
+   end)
   end,
  },
  magicjammer={
-  -- Counter Trap (SS3): chain to a spell activation, discard 1 to negate +
-  -- destroy. Cost-at-activation timing is approximated by paying the discard
-  -- at chain-resolve (close enough for this game).
   responseOnly=true,
   listens={
    ACTIVATE={
@@ -576,31 +810,31 @@ BEHAVIORS={
      return ctx.card and ctx.card.cat=="spell" and #G.hand[self.plr]>=1
     end,
     react=function(self,ctx)
-     local ans=choose{
-      kind="card",plr=self.plr,from="hand",title="MAGIC JAMMER COST",
-     }
+     local ans=choose{kind="card",plr=self.plr,from="hand",title="MAGIC JAMMER COST"}
      if not ans then return end
      discardFromHand(self.plr,ans.idx,"cost")
-     -- Find this MJ link on the chain, negate the one directly below it
-     -- (the spell we chained to), and send the negated source to GY.
-     local links=G.proc.chain.links
-     local myIdx=nil
-     for i=#links,1,-1 do
-      if links[i].source==self.card then myIdx=i; break end
-     end
-     if not myIdx or myIdx<=1 then return end
-     local target=links[myIdx-1]
-     target.negated=true
-     local loc=target.sourceLoc
-     if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col)
-     elseif loc and loc.zone=="fs" then sendFieldSpellToGY(loc.plr,"effect",self.plr) end
+     negateLinkBelow(self.card,self.plr)
     end,
    },
   },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    local sid=eventCtx.card.id
+    local s
+    if sid=="dark_hole" or sid=="raigeki" then s=500
+    elseif sid=="monster_reborn" then s=350
+    elseif sid=="polymerization" then s=400
+    elseif sid=="thousand_knives" or sid=="stamping_destruction" then s=350
+    elseif sid=="swords_of_revealing_light" or sid=="necrovalley" then s=300
+    elseif sid=="pot_of_greed" then s=150
+    else s=200
+    end
+    if #G.hand[plr]<=2 then s=s-100 end
+    return s
+   end,
+  },
  },
  seventools={
-  -- Counter Trap (SS3): chain to a trap activation, pay 1000 LP to negate +
-  -- destroy. Cost paid at chain-resolve (matches MJ's approximation).
   responseOnly=true,
   listens={
    ACTIVATE={
@@ -611,24 +845,24 @@ BEHAVIORS={
     end,
     react=function(self,ctx)
      changeLp(self.plr,-1000)
-     local links=G.proc.chain.links
-     local myIdx=nil
-     for i=#links,1,-1 do
-      if links[i].source==self.card then myIdx=i; break end
-     end
-     if not myIdx or myIdx<=1 then return end
-     local target=links[myIdx-1]
-     target.negated=true
-     local loc=target.sourceLoc
-     if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col) end
+     negateLinkBelow(self.card,self.plr)
     end,
    },
   },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    local tid=eventCtx.card.id
+    local s
+    if tid=="mirror_force" or tid=="ring_of_destruction" then s=400
+    elseif tid=="gravity_bind" or tid=="negate_attack" then s=300
+    else s=200
+    end
+    if ctx.ownLP<=1500 then s=s-200 end
+    return s
+   end,
+  },
  },
  negateattack={
-  -- Counter Trap (SS3): force the active player to End Phase. The attack
-  -- continuation in INTENTS.DECLARE_ATTACK sees G.ph~=PH_BATTLE and bails;
-  -- aiTick/autoPhase carry the active player through PH_END from there.
   responseOnly=true,
   listens={
    ATTACK={
@@ -637,6 +871,78 @@ BEHAVIORS={
     when=function(self,ctx) return ctx.actor~=self.controller end,
     react=function() doAdvancePhase(PH_END) end,
    },
+  },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    local atkVal=getMonAtk(eventCtx.attacker) or eventCtx.attacker.atk or 0
+    local s=atkVal
+    if ctx.ownLP<=atkVal then s=s+500 end
+    return s
+   end,
+  },
+ },
+ ringdestruction=(function()
+  -- Normal Trap. Offered as a response after any opp action on opp's turn
+  -- (SUMMON/FLIP/ATTACK/ACTIVATE). targetPick captures the picked monster
+  -- at activation → link.target carries it → Dark Illusion can negate when
+  -- the targeted monster is DARK. React just applies destroy + half-ATK
+  -- damage (self first, then opp if alive). Uses changeLp (not applyDamage)
+  -- so Kuriboh can't chain (effect damage, not battle damage). The LP gate
+  -- guarantees opp survives → no draw possible.
+  local function when(self,ctx)
+   local opp=3-self.plr
+   if G.active~=opp then return false end
+   local cap=G.lp[opp]
+   return hasFaceUpMonster(opp,function(m) return (m.atk or 0)<=cap end)
+  end
+  local function targetPick(self,ctx)
+   local opp=3-self.plr
+   local cap=G.lp[opp]
+   local t=choose{
+    kind="zone",plr=self.plr,side=opp,row="mon",title="RING OF DESTRUCTION",
+    filter=function(c) return c and not c.facedown and (c.atk or 0)<=cap end,
+   }
+   if not t then return nil end
+   local m=G.mon[t.plr][t.col]
+   if not m or m.facedown then return nil end
+   return {target=m,params={plr=t.plr,col=t.col,dmg=(m.atk or 0)//2}}
+  end
+  local function react(self,ctx,params)
+   local opp=3-self.plr
+   sendMonsterToGY(params.plr,params.col,"effect")
+   changeLp(self.plr,-params.dmg)
+   if G.lp[self.plr]>0 then changeLp(opp,-params.dmg) end
+  end
+  return {
+   responseOnly=true,
+   listens=quickPlayListens{optional=true,speed=2,when=when,
+    targetPick=targetPick,react=react},
+   ai={
+    scoreActivate=function(card,plr,ctx,event,eventCtx) return 300 end,
+   },
+  }
+ end)(),
+ darkillusion={
+  -- Counter Trap (SS3): chain to an activation whose link.target is a face-up
+  -- DARK monster (either side). Catches cards via targetPick (EC, Ring), via
+  -- procActivate's target arg (Thousand Knives, EC menu), or targetCard
+  -- shortcut (Trap Hole). Maneater/gkassailant pick at react-time, uncaught.
+  responseOnly=true,
+  listens={
+   ACTIVATE={
+    optional=true,
+    speed=3,
+    when=function(self,ctx)
+     local t=ctx.link and ctx.link.target
+     return t and not t.facedown and t.attr=="dark"
+    end,
+    react=function(self,ctx) negateLinkBelow(self.card,self.plr) end,
+   },
+  },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx)
+    return 200+(eventCtx.link.target.atk or 0)//4
+   end,
   },
  },
  gravitybind={
@@ -649,8 +955,11 @@ BEHAVIORS={
      return self.card.facedown
         and ctx.toPhase==PH_BATTLE and ctx.actor~=self.controller
     end,
-    react=function(self,ctx) end,  -- effect is purely the static flag
+    react=function(self,ctx) end,
    },
+  },
+  ai={
+   scoreActivate=function(card,plr,ctx,event,eventCtx) return 250 end,
   },
  },
 
@@ -693,6 +1002,28 @@ BEHAVIORS={
    },
   },
  },
+ thunderdragon={
+  handIgnition={
+   label="DISCARD: SEARCH",
+   canActivate=function(card,plr)
+    for _,id in ipairs(G.deck[plr]) do
+     if id=="thunder_dragon" then return true end
+    end
+    return false
+   end,
+   activate=function(card,plr,handIdx)
+    discardFromHand(plr,handIdx,"effect")
+    local added=0
+    for i=#G.deck[plr],1,-1 do
+     if added>=2 or #G.hand[plr]>=MAX_HAND then break end
+     if G.deck[plr][i]=="thunder_dragon" then
+      table.insert(G.hand[plr],makeCard(table.remove(G.deck[plr],i)))
+      added=added+1
+     end
+    end
+   end,
+  },
+ },
  maneater={
   -- FLIP: destroy 1 monster on either side.
   listens={
@@ -703,23 +1034,11 @@ BEHAVIORS={
      local opp=3-self.plr
      local target=choose{
       kind="zone",plr=self.plr,row="mon",side="any",title="MAN-EATER",
-      filter=function(c,p,col) return canTargetMon(c) end,
-      -- AI: strongest targetable opp, else own weakest targetable.
-      aiPick=function(req)
-       local best,bestK=-1,nil
-       for c=1,3 do
-        local m=G.mon[opp][c]
-        if m and canTargetMon(m) then
-         local s=(m.pos==1 and not m.facedown) and m.atk or m.def
-         if s>best then best=s; bestK={plr=opp,col=c} end
-        end
-       end
-       if bestK then return bestK end
-       for c=1,3 do
-        if canTargetMon(G.mon[self.plr][c]) then return {plr=self.plr,col=c} end
-       end
-       return nil
-      end,
+      filter=canTargetMon,
+      -- AI: strongest targetable opp (atk-aware), else own weakest targetable.
+      aiPick=function(req) return aiPickBounceTarget(self.plr,opp,function(m)
+       return (m.pos==1 and not m.facedown) and m.atk or m.def
+      end) end,
      }
      if not target then return end
      if not (G.mon[target.plr] and G.mon[target.plr][target.col]) then return end
@@ -730,23 +1049,24 @@ BEHAVIORS={
   },
  },
  legion={
-  -- Ignition is plr==1 only: the extra-summon flag is consumed by player UI
-  -- and INTENTS.SUMMON's `extra` branch; AI has no path to use it yet.
+  -- The ignition sets a flag and changes nothing visible, so it only pays off
+  -- via the follow-up it unlocks -- aiEnumerateMain emits that extra summon,
+  -- and the enabler pass is what connects the two.
   ignition={
    label="EXTRA SUMMON",
    canActivate=function(_,plr)
-    return plr==1 and not G.legionSummonUsed and not G.extraSpellcasterSummon
+    return not G.legionSummonUsed and not G.extraSpellcasterSummon
    end,
    activate=function() G.extraSpellcasterSummon=true; G.legionSummonUsed=true end,
   },
   listens={
    DESTROYED={
-    when=function(self,ctx) return ctx.card==self.card and self.plr==1 end,
-    react=function(self,ctx) legionSearch() end,
+    when=function(self,ctx) return ctx.card==self.card end,
+    react=function(self,ctx) legionSearch(self.plr) end,
    },
    TRIBUTED={
-    when=function(self,ctx) return ctx.card==self.card and self.plr==1 end,
-    react=function(self,ctx) legionSearch() end,
+    when=function(self,ctx) return ctx.card==self.card end,
+    react=function(self,ctx) legionSearch(self.plr) end,
    },
   },
  },
@@ -806,6 +1126,50 @@ BEHAVIORS={
    return b
   end,
  },
+ darkpaladin={
+  -- Fusion (Dark Magician + Buster Blader). Negates opp Spells like Magic
+  -- Jammer; gains 500 ATK per Dragon on the field or in either GY.
+  atkBonus=function(card)
+   local b=0
+   for p=1,2 do
+    for i=1,3 do
+     local m=G.mon[p][i]
+     if m and not m.facedown and m.type=="dragon" then b=b+500 end
+    end
+    for _,c in ipairs(G.gy[p]) do
+     if c.type=="dragon" then b=b+500 end
+    end
+   end
+   return b
+  end,
+  listens={
+   ACTIVATE={
+    optional=true,
+    speed=2,
+    when=function(self,ctx)
+     return ctx.card and ctx.card.cat=="spell"
+        and ctx.actor and ctx.actor~=self.plr
+        and #G.hand[self.plr]>=1
+    end,
+    react=function(self,ctx)
+     local ans=choose{kind="card",plr=self.plr,from="hand",title="DARK PALADIN COST"}
+     if not ans then return end
+     discardFromHand(self.plr,ans.idx,"cost")
+     local links=G.proc.chain.links
+     local myIdx=nil
+     for i=#links,1,-1 do
+      if links[i].source==self.card then myIdx=i; break end
+     end
+     if not myIdx or myIdx<=1 then return end
+     local target=links[myIdx-1]
+     target.negated=true
+     local loc=target.sourceLoc
+     if loc and loc.zone=="st" then revealAndDestroyST(loc.plr,loc.col)
+     elseif loc and loc.zone=="fs" then sendFieldSpellToGY(loc.plr,"effect",self.plr) end
+    end,
+   },
+  },
+ },
  sternmystic={
   -- FLIP: briefly reveal every face-down card on the field.
   listens={
@@ -828,6 +1192,21 @@ BEHAVIORS={
   piercing=true,
   onAfterAttack=function(card) card.pos=2 end,
  },
+ gearfried={
+  -- When any Equip is activated targeting this card, negate + destroy the
+  -- equip via negateLinkBelow. Mandatory (no prompt) — runResponseWindow
+  -- auto-fires mandatory listeners on EV_ACTIVATE before offering optionals.
+  listens={
+   ACTIVATE={
+    speed=2,
+    when=function(self,ctx)
+     return ctx.card and ctx.card.subtype=="equip"
+        and ctx.link and ctx.link.target==self.card
+    end,
+    react=function(self,ctx) negateLinkBelow(self.card,self.plr) end,
+   },
+  },
+ },
  rocketwarrior={
   -- "Rocket mode" while it's the controller's turn: during your turn it can't
   -- be destroyed by battle and you take no battle damage from its battles.
@@ -846,8 +1225,8 @@ BEHAVIORS={
   end,
  },
  timewizard={
-  -- Once per turn (per copy). Win: wipe opp board. Lose: wipe own board +
-  -- self-damage equal to half the total ATK of own monsters destroyed.
+  -- Once per turn per copy. Win: wipe opp board. Lose: wipe own + half-total
+  -- ATK self-damage.
   ignition={
    label="TIME ROULETTE",
    canActivate=function(card) return card.timeWizardUsed~=G.turn end,
@@ -924,7 +1303,6 @@ BEHAVIORS={
   },
  },
  gkcurse={
-  -- Each time summoned (Normal or Special), burn the opponent for 800.
   listens={
    SUMMON={
     when =function(self,ctx) return ctx.card==self.card end,
@@ -940,29 +1318,29 @@ BEHAVIORS={
   listens={
    ATTACK={
     when=function(self,ctx)
-     return ctx.attacker==self.card and self.plr==1
-        and staticActive("necrovalley") and hasTargetableMon(2)
+     return ctx.attacker==self.card
+        and staticActive("necrovalley") and hasTargetableMon(3-self.plr)
     end,
     react=function(self,ctx)
+     local plr=self.plr
      local key=choose{
-      kind="menu",plr=1,forced=true,
+      kind="menu",plr=plr,forced=true,
       items={{"EFFECT","yes"},{"NORMAL","no"}},
      }
      if key~="yes" then return end
      local target=choose{
-      kind="zone",plr=1,side=2,title="ASSAILANT: CHANGE POS",
+      kind="zone",plr=plr,side=3-plr,title="ASSAILANT: CHANGE POS",
       filter=function(c) return canTargetMon(c) end,
      }
      if not target then return end
      local m=G.mon[target.plr] and G.mon[target.plr][target.col]
      if not m then return end
      if m.facedown then
-      m.facedown=false; m.pos=1
+      m.facedown=false; m.pos=1; m.posChanged=true
       flipEvent(m,target.plr,target.col)
      else
-      m.pos=(m.pos==1) and 2 or 1
+      togglePosition(m)
      end
-     m.posChanged=true
      checkEquips()
     end,
    },
@@ -998,23 +1376,35 @@ BEHAVIORS={
    },
   },
  },
+ gkguard={
+  -- FLIP: target 1 monster on either side; return it to its owner's hand.
+  listens={
+   FLIP={
+    when=function(self,ctx) return ctx.card==self.card end,
+    react=function(self,ctx)
+     if not (hasTargetableMon(1) or hasTargetableMon(2)) then return end
+     local opp=3-self.plr
+     local target=choose{
+      kind="zone",plr=self.plr,row="mon",side="any",title="GK GUARD",
+      filter=canTargetMon,
+      aiPick=function(req) return aiPickBounceTarget(self.plr,opp) end,
+     }
+     if not target then return end
+     if G.mon[target.plr][target.col] then
+      returnMonsterToHand(target.plr,target.col)
+     end
+    end,
+   },
+  },
+ },
  necrovalley={
-  -- Field Spell. Two static effects, no resolve action:
-  --  1. necrovalley flag — presence query referenced by GK cards (gkassailant,
-  --     gkshaman conditional, catillomen mode switch, +500 ATK/DEF in
-  --     getMonAtk/getMonDef).
-  --  2. blocksGYMoves — negates GY-move effects (Monster Reborn, Call of the
-  --     Haunted, Legion's GY search).
+  -- Field Spell. necrovalley flag (presence query) + blocksGYMoves (rule mod).
   static={necrovalley=true, blocksGYMoves=true},
-  aiCanCast=function() return true end,
   resolve=function() end,
  },
  sogen={
-  -- Field Spell. Warrior + Beast-Warrior monsters on the field (either side)
-  -- gain 400 ATK/DEF. Applied inline in getMonAtk/getMonDef via the `sogen`
-  -- static flag (parallels Necrovalley's +500 to Gravekeeper's monsters).
+  -- Field Spell. +400 ATK/DEF to Warrior + Beast-Warrior on either side.
   static={sogen=true},
-  aiCanCast=function() return true end,
   resolve=function() end,
  },
  gkshaman={
@@ -1059,15 +1449,9 @@ BEHAVIORS={
   },
  },
  gkstele={
-  -- isGravekeeper is a name-prefix check; restrict to monsters here.
-  canActivate=function()
-   for _,c in ipairs(G.gy[1]) do
-    if isGravekeeper(c) and c.cat=="monster" then return true end
-   end
-   return false
-  end,
-  aiCanCast=function()
-   for _,c in ipairs(G.gy[2]) do
+  canActivate=function(card,plr)
+   plr=plr or 1
+   for _,c in ipairs(G.gy[plr]) do
     if isGravekeeper(c) and c.cat=="monster" then return true end
    end
    return false
@@ -1094,8 +1478,7 @@ BEHAVIORS={
   tributeValue=function(m) return isGravekeeper(m) and 3 or nil end,
   -- Migrated to listens.SUMMON 2026-05-20 (phase 2). onTributeSummon + onSummon
   -- fused into one reaction; the tributed list comes from ctx (no G.oracleTribData
-  -- staging needed). For now the player path still calls the legacy openOraclePick
-  -- UI -- it migrates to CHOOSE in phase 9.
+  -- staging needed).
   listens={
    SUMMON={
     when=function(self,ctx)
@@ -1109,30 +1492,7 @@ BEHAVIORS={
       if isGravekeeper(m) then gkN=gkN+1 end
      end
      if gkN==0 then return end
-     if self.plr==1 then
-      openOraclePick({card=self.card,plr=1,remaining=gkN,lvlSum=lvlS,used={}})
-     else
-      -- AI: always activate effects in order E3 → E2 → E1
-      for _,eff in ipairs({3,2,1}) do
-       if gkN<=0 then break end
-       if eff==1 then self.card.atkMod=(self.card.atkMod or 0)+lvlS*100
-       elseif eff==2 then
-        for i=1,3 do
-         if G.mon[1][i] and G.mon[1][i].facedown then revealAndDestroyMon(1,i,"effect") end
-        end
-        checkEquips()
-       elseif eff==3 then
-        for i=1,3 do
-         local m=G.mon[1][i]
-         if m then
-          m.atkMod=(m.atkMod or 0)-2000
-          m.defMod=(m.defMod or 0)-2000
-         end
-        end
-       end
-       gkN=gkN-1
-      end
-     end
+     oraclePickLoop(self.card,self.plr,gkN,lvlS)
     end,
    },
   },

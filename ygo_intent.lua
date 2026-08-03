@@ -41,7 +41,8 @@ PHASE_TABLE={
   onEnter=function(plr) end,
   onExit =function(plr) end,
   legal  ={SUMMON=true, CAST=true, SET_ST=true, ACTIVATE=true,
-           CHANGE_POS=true, ADVANCE_PHASE=true},
+           CHANGE_POS=true, ADVANCE_PHASE=true,
+           IGNITION=true, HAND_IGNITION=true},
  },
  [PH_BATTLE]={
   next=PH_END,
@@ -52,8 +53,45 @@ PHASE_TABLE={
  },
  [PH_END]={
   next=PH_DRAW,
-  onEnter=function(plr) end,
+  -- 6-card hand limit: force discards down to 6 before the turn flips.
+  -- procBusy gates aiTick/autoPhase while the discard frame runs.
+  onEnter=function(plr)
+   if #G.hand[plr]<=6 then return end
+   procPushFrame(function()
+    while #G.hand[plr]>6 do
+     local ans=choose{
+      kind="card",plr=plr,from="hand",title="END PHASE - DISCARD",
+      aiPick=function(req)
+       local hand=G.hand[req.plr]
+       local worst,worstI=math.huge,nil
+       for i,c in ipairs(hand) do
+        local v=(c.cat=="monster") and (c.atk or 0) or 9999
+        if v<worst then worst=v; worstI=i end
+       end
+       return worstI and {idx=worstI} or nil
+      end,
+     }
+     if not ans then return end
+     discardFromHand(plr,ans.idx,"rule")
+    end
+   end)
+  end,
   onExit =function(plr)
+   -- Return any borrowed monsters (Enemy Controller's take-control). Done
+   -- before turn flip so they land back with their original owner.
+   for p=1,2 do
+    for c=1,3 do
+     local m=G.mon[p][c]
+     if m and m.borrowedFrom then
+      local owner=m.borrowedFrom
+      G.mon[p][c]=nil
+      m.borrowedFrom=nil; m.borrowedAtTurn=nil
+      local destCol=firstEmpty(G.mon[owner])
+      if destCol then G.mon[owner][destCol]=m
+      else table.insert(G.gy[owner],m) end
+     end
+    end
+   end
    -- Order matters: tickSwords reads G.active to find opp's swords counter,
    -- so it must run BEFORE the active flip.
    tickSwords()
@@ -86,6 +124,25 @@ function doAdvancePhase(target)
  G.ph=target
  raise(EV_PHASE,{phase=target,prevPhase=prev,toPhase=target,actor=G.active})
  nxt.onEnter(G.active)
+end
+
+-- ============================================================
+-- ACTIVATION DISPATCH
+-- ============================================================
+-- An activation has one of two shapes:
+--   b.activate(opts) -- effect with decisions taken AT activation (so the
+--                       chain link can carry a target). Drives choose{} for
+--                       whoever controls the card: never mentions player 1.
+--   b.resolve(plr)   -- effect resolved at chain-resolve time. May still
+--                       choose{} from there (see fluteofdragon).
+-- Carrying BOTH means the card is mid-migration: its activate hook is still
+-- player-1-only and resolve is a duplicate AI path. Those keep the AI on
+-- resolve until the hook is made player-agnostic and the resolve deleted.
+local function dispatchActivate(b,opts)
+ if not (b and b.activate) then return false end
+ if opts.plr~=1 and b.resolve then return false end
+ b.activate(opts)
+ return true
 end
 
 -- ============================================================
@@ -178,8 +235,8 @@ end
 -- Covers Normal / Continuous / Quick-Play / Field / Equip via card.subtype.
 -- `target={plr,col}` only for equips. `col` may be omitted for AI (handler
 -- picks firstEmpty or falls through to hand→GY direct).
--- Player path dispatches to b.activate; AI path goes straight to procActivate
--- (b.resolve handles AI auto-targeting).
+-- Dispatches via dispatchActivate; falls through to procActivate when the
+-- card has no activate hook (b.resolve does the work at chain-resolve time).
 INTENTS.CAST=function(plr,a)
  if plr~=G.active then return false,"not active player" end
  local card=a.card
@@ -216,7 +273,7 @@ INTENTS.CAST=function(plr,a)
   placed.equippedTo=a.target
   G.st[plr][a.col]=placed
   table.remove(G.hand[plr],a.handIdx)
-  procActivate(placed,plr,"st",a.col)
+  procActivate(placed,plr,"st",a.col,nil,G.mon[a.target.plr][a.target.col])
  else
   local stCol=a.col or firstEmpty(G.st[plr])
   if stCol then
@@ -225,9 +282,7 @@ INTENTS.CAST=function(plr,a)
    G.st[plr][stCol]=placed
    table.remove(G.hand[plr],a.handIdx)
    local b=behaviorOf(placed)
-   if plr==1 and b and b.activate then
-    b.activate{col=stCol,card=placed,zone="st",plr=plr}
-   else
+   if not dispatchActivate(b,{col=stCol,card=placed,zone="st",plr=plr}) then
     procActivate(placed,plr,"st",stCol)
    end
   else
@@ -266,14 +321,15 @@ end
 -- ACTIVATE: Flip a face-down S/T card face-up + push it onto the chain.
 -- (CAST is hand→field; ACTIVATE is already-on-field.)
 -- Args: {col, target?}. `target={plr,col}` for Equip activation.
--- Dispatches to b.activate (player, custom flows) or procActivate.
+-- Dispatches via dispatchActivate, else procActivate.
 INTENTS.ACTIVATE=function(plr,a)
  if not a.col or a.col<1 or a.col>3 then return false,"bad col" end
  local card=G.st[plr][a.col]
  if not card then return false,"no card in zone" end
  if not card.facedown then return false,"card already face-up" end
+ if card.setThisTurn then return false,"set this turn" end
  local b=behaviorOf(card)
- if b and b.canActivate and not b.canActivate(card) then
+ if b and b.canActivate and not b.canActivate(card,plr) then
   return false,"canActivate=false"
  end
  if plr==1 then G.mode="free"; G.pending=nil end
@@ -282,11 +338,9 @@ INTENTS.ACTIVATE=function(plr,a)
   local t=G.mon[a.target.plr][a.target.col]
   if not t or t.facedown then return false,"bad equip target" end
   card.equippedTo=a.target
-  procActivate(card,plr,"st",a.col)
+  procActivate(card,plr,"st",a.col,nil,t)
  else
-  if plr==1 and b and b.activate then
-   b.activate{col=a.col,card=card,zone="st",plr=plr}
-  else
+  if not dispatchActivate(b,{col=a.col,card=card,zone="st",plr=plr}) then
    procActivate(card,plr,"st",a.col)
   end
  end
@@ -307,6 +361,8 @@ INTENTS.RESPONSE=function(plr,a)
   return false,"bad optionIdx"
  end
  G.mode="free"
+ -- Chaining by choice is the one thing response replay cannot reproduce.
+ simNoteOpponentResponse(plr)
  procAnswerChoice({optionIdx=a.optionIdx})
  return true
 end
@@ -399,6 +455,39 @@ INTENTS.CHANGE_POS=function(plr,a)
  return true
 end
 
+-- IGNITION: fire a face-up field monster's ignition effect. Args: {col}.
+-- Main Phase only (PHASE_TABLE.legal), matching the menu's isMain gate.
+INTENTS.IGNITION=function(plr,a)
+ if plr~=G.active then return false,"not active player" end
+ if not a.col or a.col<1 or a.col>3 then return false,"bad col" end
+ local card=G.mon[plr][a.col]
+ if not card then return false,"no monster" end
+ if card.facedown then return false,"monster face-down" end
+ local b=behaviorOf(card)
+ if not (b and b.ignition and b.ignition.activate) then return false,"no ignition" end
+ if b.ignition.canActivate and not b.ignition.canActivate(card,plr) then
+  return false,"canActivate=false"
+ end
+ if plr==1 then G.mode="free"; G.pending=nil end
+ b.ignition.activate(card,plr,a.col)
+ return true
+end
+
+-- HAND_IGNITION: fire a hand monster's ignition effect. Args: {handIdx}.
+INTENTS.HAND_IGNITION=function(plr,a)
+ if plr~=G.active then return false,"not active player" end
+ local card=a.handIdx and G.hand[plr][a.handIdx]
+ if not card then return false,"no card at handIdx" end
+ local b=behaviorOf(card)
+ if not (b and b.handIgnition and b.handIgnition.activate) then return false,"no hand ignition" end
+ if b.handIgnition.canActivate and not b.handIgnition.canActivate(card,plr) then
+  return false,"canActivate=false"
+ end
+ if plr==1 then G.mode="free"; G.pending=nil end
+ b.handIgnition.activate(card,plr,a.handIdx)
+ return true
+end
+
 -- ADVANCE_PHASE: move from G.ph to its successor.
 -- Args: {to?}. If `to` is set, jumps directly (END TURN uses to=PH_END).
 -- Pipeline: cur.onExit(active) → set G.ph → raise EV_PHASE → next.onEnter.
@@ -432,7 +521,7 @@ function submitIntent(plr,t,a)
   end
  else
   if procBusy() then
-   trace("intent: "..t.." rejected (procBusy)")
+   trace("intent: "..t.." rejected (procBusy: "..procBusyReason()..")")
    return false,"busy"
   end
   local ph=PHASE_TABLE[G.ph]
@@ -441,5 +530,8 @@ function submitIntent(plr,t,a)
    return false,"illegal phase"
   end
  end
+ -- Fork point for response scoring: the AI replays from here to work out
+ -- whether chaining to this action beats passing. No-op unless idle.
+ simRecordOrigin(plr,t,a)
  return fn(plr,a)
 end
